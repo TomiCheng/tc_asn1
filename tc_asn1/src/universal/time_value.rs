@@ -67,7 +67,7 @@ fn date(s: &str) -> Result<(u8, usize)> {
     } else {
         n % 400
     };
-    let leap = y.is_multiple_of(4) && (!y.is_multiple_of(100) || y == 0);
+    let leap = y % 4 == 0 && (y % 100 != 0 || y == 0);
     if suffix.is_empty() {
         return Ok((1, class));
     }

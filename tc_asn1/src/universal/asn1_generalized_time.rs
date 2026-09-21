@@ -119,9 +119,7 @@ impl DecodeContent for Asn1GeneralizedTime {
             return Err(Asn1Error::MalformedValue);
         }
         let (year, fields) = body.split_at(4);
-        let [hi, lo] = year.as_chunks::<2>().0 else {
-            return Err(Asn1Error::MalformedValue);
-        };
+        let (hi, lo) = year.split_at(2);
         let year = u16::from(two_digits(hi)?) * 100 + u16::from(two_digits(lo)?);
         DateTime::from_fields(year, fields).map(Self)
     }

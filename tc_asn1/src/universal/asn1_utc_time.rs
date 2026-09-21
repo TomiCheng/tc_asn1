@@ -119,7 +119,7 @@ impl DecodeContent for Asn1UtcTime {
             return Err(Asn1Error::MalformedValue);
         }
         let (year, fields) = yy.split_at(2);
-        let yy = two_digits(year.try_into().map_err(|_| Asn1Error::MalformedValue)?)?;
+        let yy = two_digits(year)?;
         let year = if yy >= 50 { 1900 } else { 2000 } + u16::from(yy);
         let inner = DateTime::from_fields(year, fields)?;
         Self::new(

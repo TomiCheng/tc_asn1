@@ -90,13 +90,13 @@ impl Tagged for Asn1BmpString {
 impl DecodeContent for Asn1BmpString {
     fn decode_content(value: &[u8], context: &mut DecodingContext) -> Result<Self, Asn1Error> {
         context.options().check_content_len(value.len())?;
-        let (units, remainder) = value.as_chunks::<2>();
-        if !remainder.is_empty() {
+        let units = value.chunks_exact(2);
+        if !units.remainder().is_empty() {
             return Err(Asn1Error::MalformedValue);
         }
         let mut text = String::with_capacity(units.len());
         for bytes in units {
-            let unit = u16::from_be_bytes(*bytes);
+            let unit = u16::from_be_bytes([bytes[0], bytes[1]]);
             // from_u32 rejects D800-DFFF, which UCS-2 must not contain.
             let ch = char::from_u32(u32::from(unit)).ok_or(Asn1Error::MalformedValue)?;
             text.push(ch);
@@ -114,9 +114,9 @@ impl EncodeContent for Asn1BmpString {
         let out = out
             .get_mut(..self.wire_len())
             .ok_or(Asn1Error::BufferTooSmall)?;
-        for (slot, ch) in out.as_chunks_mut::<2>().0.iter_mut().zip(self.text.chars()) {
+        for (slot, ch) in out.chunks_exact_mut(2).zip(self.text.chars()) {
             // new and decode_content guarantee the code point fits in u16.
-            *slot = (ch as u16).to_be_bytes();
+            slot.copy_from_slice(&(ch as u16).to_be_bytes());
         }
         Ok(out.len())
     }

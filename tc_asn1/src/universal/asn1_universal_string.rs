@@ -90,13 +90,14 @@ impl Tagged for Asn1UniversalString {
 impl DecodeContent for Asn1UniversalString {
     fn decode_content(value: &[u8], context: &mut DecodingContext) -> Result<Self, Asn1Error> {
         context.options().check_content_len(value.len())?;
-        let (units, remainder) = value.as_chunks::<4>();
-        if !remainder.is_empty() {
+        let units = value.chunks_exact(4);
+        if !units.remainder().is_empty() {
             return Err(Asn1Error::MalformedValue);
         }
         let mut text = String::with_capacity(units.len());
         for bytes in units {
-            let ch = char::from_u32(u32::from_be_bytes(*bytes)).ok_or(Asn1Error::MalformedValue)?;
+            let unit = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+            let ch = char::from_u32(unit).ok_or(Asn1Error::MalformedValue)?;
             text.push(ch);
         }
         Ok(Self { text })
@@ -112,8 +113,8 @@ impl EncodeContent for Asn1UniversalString {
         let out = out
             .get_mut(..self.wire_len())
             .ok_or(Asn1Error::BufferTooSmall)?;
-        for (slot, ch) in out.as_chunks_mut::<4>().0.iter_mut().zip(self.text.chars()) {
-            *slot = u32::from(ch).to_be_bytes();
+        for (slot, ch) in out.chunks_exact_mut(4).zip(self.text.chars()) {
+            slot.copy_from_slice(&u32::from(ch).to_be_bytes());
         }
         Ok(out.len())
     }

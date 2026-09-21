@@ -8,7 +8,7 @@ use crate::error::Asn1Error;
 
 /// Gregorian leap year: every fourth year, except centuries, except every fourth century.
 pub(crate) fn is_leap_year(year: u16) -> bool {
-    year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400))
+    year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
 }
 
 /// Days in the month; the caller has checked that `month` is 1-12.
@@ -69,9 +69,10 @@ impl DateTime {
 
     /// Builds from the year and the ten `MMDDhhmmss` octets.
     pub(crate) fn from_fields(year: u16, fields: &[u8]) -> Result<Self, Asn1Error> {
-        let [m, d, h, mi, s] = fields.as_chunks::<2>().0 else {
+        if fields.len() != 10 {
             return Err(Asn1Error::MalformedValue);
-        };
+        }
+        let [m, d, h, mi, s] = [0, 2, 4, 6, 8].map(|at| &fields[at..at + 2]);
         Self::checked(
             year,
             two_digits(m)?,
@@ -84,20 +85,17 @@ impl DateTime {
 
     /// Writes `MMDDhhmmss` into ten octets.
     pub(crate) fn write_fields(&self, out: &mut [u8; 10]) {
-        for (slot, n) in out.as_chunks_mut::<2>().0.iter_mut().zip([
-            self.month,
-            self.day,
-            self.hour,
-            self.minute,
-            self.second,
-        ]) {
-            *slot = digits(n);
+        for (slot, n) in
+            out.chunks_exact_mut(2)
+                .zip([self.month, self.day, self.hour, self.minute, self.second])
+        {
+            slot.copy_from_slice(&digits(n));
         }
     }
 }
 
-/// Two ASCII digits to a number.
-pub(crate) fn two_digits(pair: &[u8; 2]) -> Result<u8, Asn1Error> {
+/// Two ASCII digits to a number; any other length is malformed.
+pub(crate) fn two_digits(pair: &[u8]) -> Result<u8, Asn1Error> {
     match pair {
         [a, b] if a.is_ascii_digit() && b.is_ascii_digit() => Ok((a - b'0') * 10 + (b - b'0')),
         _ => Err(Asn1Error::MalformedValue),
