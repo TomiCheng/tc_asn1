@@ -47,8 +47,10 @@ pub struct Asn1VisibleString {
 }
 
 impl Asn1VisibleString {
+    /// The identifier octets, [`tag::VISIBLE_STRING`](crate::tag::VISIBLE_STRING).
     pub const TAG: &'static [u8] = super::tag::VISIBLE_STRING;
 
+    /// Rejects any character outside `0x20`-`0x7E`.
     pub fn new(text: &str) -> Result<Self, Asn1Error> {
         if !text.bytes().all(is_visible) {
             return Err(Asn1Error::MalformedValue);
@@ -58,6 +60,7 @@ impl Asn1VisibleString {
         })
     }
 
+    /// The text, `0x20`-`0x7E` only.
     pub fn as_str(&self) -> &str {
         &self.text
     }

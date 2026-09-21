@@ -38,8 +38,10 @@ pub struct Asn1SequenceOf<T> {
 }
 
 impl<T> Asn1SequenceOf<T> {
+    /// The identifier octets, [`tag::SEQUENCE`](crate::tag::SEQUENCE).
     pub const TAG: &'static [u8] = super::tag::SEQUENCE;
 
+    /// From the elements in wire order.
     pub fn new(elements: Vec<T>) -> Self {
         Self {
             elements: Asn1Constructed::new(Self::TAG, elements),
@@ -51,6 +53,7 @@ impl<T> Asn1SequenceOf<T> {
         self.elements.items()
     }
 
+    /// [`elements`](Self::elements), owned.
     pub fn into_elements(self) -> Vec<T> {
         self.elements.into_items()
     }

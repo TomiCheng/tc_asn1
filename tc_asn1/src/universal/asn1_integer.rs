@@ -57,6 +57,7 @@ pub struct Asn1Integer {
 }
 
 impl Asn1Integer {
+    /// The identifier octets, [`tag::INTEGER`](crate::tag::INTEGER).
     pub const TAG: &'static [u8] = super::tag::INTEGER;
 
     /// From content octets: empty or with a redundant sign octet is
@@ -97,6 +98,7 @@ impl Asn1Integer {
         &self.value
     }
 
+    /// Whether the value is below zero: the high bit of the first octet.
     pub fn is_negative(&self) -> bool {
         self.value[0] & 0x80 != 0
     }

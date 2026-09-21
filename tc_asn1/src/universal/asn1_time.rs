@@ -95,6 +95,7 @@ macro_rules! time_type {
         }
 
         impl $name {
+            #[doc = concat!("The identifier octets, [`tag::", stringify!($tag), "`](crate::tag::", stringify!($tag), ").")]
             pub const TAG: &'static [u8] = tag::$tag;
 
             /// Validates and normalizes the value notation; invalid structure or

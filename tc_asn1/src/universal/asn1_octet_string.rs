@@ -36,6 +36,7 @@ pub struct Asn1OctetString {
 }
 
 impl Asn1OctetString {
+    /// The identifier octets, [`tag::OCTET_STRING`](crate::tag::OCTET_STRING).
     pub const TAG: &'static [u8] = super::tag::OCTET_STRING;
 
     /// Copies the octets; [`From<Vec<u8>>`](#impl-From<Vec<u8>>-for-Asn1OctetString)
@@ -46,6 +47,7 @@ impl Asn1OctetString {
         }
     }
 
+    /// The octets.
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
     }

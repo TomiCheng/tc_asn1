@@ -40,6 +40,7 @@ pub struct Asn1Oid {
 }
 
 impl Asn1Oid {
+    /// The identifier octets, [`tag::OBJECT_IDENTIFIER`](crate::tag::OBJECT_IDENTIFIER).
     pub const TAG: &'static [u8] = super::tag::OBJECT_IDENTIFIER;
 
     /// From content octets: empty, a subidentifier starting with `80`, an
@@ -74,6 +75,7 @@ impl Asn1Oid {
         Ok(Self { bytes })
     }
 
+    /// The content octets: the base-128 subidentifiers.
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
     }
@@ -178,6 +180,7 @@ impl NamedOid {
         Self { der, dotted, name }
     }
 
+    /// The OID as an owned [`Asn1Oid`].
     pub fn oid(&self) -> Asn1Oid {
         Asn1Oid {
             bytes: self.der.to_vec(),
@@ -194,6 +197,7 @@ impl NamedOid {
         self.dotted
     }
 
+    /// The name, such as `rsaEncryption`.
     pub const fn name(&self) -> &'static str {
         self.name
     }

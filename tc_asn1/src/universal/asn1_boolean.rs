@@ -34,12 +34,15 @@ use crate::{
 pub struct Asn1Boolean(bool);
 
 impl Asn1Boolean {
+    /// The identifier octets, [`tag::BOOLEAN`](crate::tag::BOOLEAN).
     pub const TAG: &'static [u8] = super::tag::BOOLEAN;
 
+    /// Whether the value is TRUE.
     pub const fn is_true(&self) -> bool {
         self.0
     }
 
+    /// Whether the value is FALSE.
     pub const fn is_false(&self) -> bool {
         !self.0
     }

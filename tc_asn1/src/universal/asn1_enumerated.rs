@@ -43,6 +43,7 @@ pub struct Asn1Enumerated {
 }
 
 impl Asn1Enumerated {
+    /// The identifier octets, [`tag::ENUMERATED`](crate::tag::ENUMERATED).
     pub const TAG: &'static [u8] = super::tag::ENUMERATED;
 
     /// From content octets: empty or with a redundant sign octet is

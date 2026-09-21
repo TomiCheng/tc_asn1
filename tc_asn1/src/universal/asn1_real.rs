@@ -56,6 +56,7 @@ pub struct Asn1Real {
 }
 
 impl Asn1Real {
+    /// The identifier octets, [`tag::REAL`](crate::tag::REAL).
     pub const TAG: &'static [u8] = super::tag::REAL;
 
     /// `±mantissa × 2^exponent`, the mantissa an unsigned big-endian

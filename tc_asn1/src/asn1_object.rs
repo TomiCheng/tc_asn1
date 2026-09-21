@@ -42,30 +42,55 @@ mod dump;
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Asn1Object {
+    /// A BOOLEAN (01).
     Boolean(Asn1Boolean),
+    /// An INTEGER (02).
     Integer(Asn1Integer),
+    /// A BIT STRING (03).
     BitString(Asn1BitString),
+    /// An OCTET STRING (04).
     OctetString(Asn1OctetString),
+    /// A NULL (05).
     Null(Asn1Null),
+    /// An OBJECT IDENTIFIER (06).
     Oid(Asn1Oid),
+    /// A REAL (09).
     Real(Asn1Real),
+    /// An ENUMERATED (0A).
     Enumerated(Asn1Enumerated),
+    /// A UTF8String (0C).
     Utf8String(Asn1Utf8String),
+    /// A RELATIVE-OID (0D).
     RelativeOid(Asn1RelativeOid),
+    /// A TIME (0E).
     Time(Asn1Time),
+    /// A NumericString (12).
     NumericString(Asn1NumericString),
+    /// A PrintableString (13).
     PrintableString(Asn1PrintableString),
+    /// An IA5String (16).
     Ia5String(Asn1Ia5String),
+    /// A UTCTime (17).
     UtcTime(Asn1UtcTime),
+    /// A GeneralizedTime (18).
     GeneralizedTime(Asn1GeneralizedTime),
+    /// A VisibleString (1A).
     VisibleString(Asn1VisibleString),
+    /// A UniversalString (1C).
     UniversalString(Asn1UniversalString),
+    /// A BMPString (1E).
     BmpString(Asn1BmpString),
+    /// A DATE (1F 1F).
     Date(Asn1Date),
+    /// A TIME-OF-DAY (1F 20).
     TimeOfDay(Asn1TimeOfDay),
+    /// A DATE-TIME (1F 21).
     DateTime(Asn1DateTime),
+    /// A DURATION (1F 22).
     Duration(Asn1Duration),
+    /// An OID-IRI (1F 23).
     OidIri(Asn1OidIri),
+    /// A RELATIVE-OID-IRI (1F 24).
     RelativeOidIri(Asn1RelativeOidIri),
     /// A universal SEQUENCE (30).
     SequenceOf(Asn1SequenceOf<Asn1Object>),

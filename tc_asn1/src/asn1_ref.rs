@@ -15,9 +15,13 @@ use crate::{DecodeContent, DecodingContext, DecodingOptions, Tagged};
 /// The class bits of an identifier octet (X.690 §8.1.2.2).
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum Asn1Class {
+    /// `00`: the types X.680 defines.
     Universal,
+    /// `01`: tags an application defines.
     Application,
+    /// `10`: `[n]` tags, read in the context of the enclosing type.
     ContextSpecific,
+    /// `11`: tags for private use.
     Private,
 }
 
@@ -151,10 +155,12 @@ impl<'a> Asn1Ref<'a> {
         self.tag
     }
 
+    /// The class bits of [`tag`](Self::tag).
     pub fn class(&self) -> Asn1Class {
         Asn1Class::of(self.tag[0])
     }
 
+    /// Whether the constructed bit `0x20` of [`tag`](Self::tag) is set.
     pub fn is_constructed(&self) -> bool {
         self.tag[0] & 0x20 != 0
     }

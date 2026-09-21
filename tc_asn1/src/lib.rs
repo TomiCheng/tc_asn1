@@ -78,6 +78,7 @@
 //! the profiles belong to the crates built on this one.
 
 #![no_std]
+#![deny(missing_docs)]
 
 extern crate alloc;
 

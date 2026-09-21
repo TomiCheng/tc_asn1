@@ -67,8 +67,10 @@ impl<T: Encode> Hash for Asn1SetOf<T> {
 }
 
 impl<T> Asn1SetOf<T> {
+    /// The identifier octets, [`tag::SET`](crate::tag::SET).
     pub const TAG: &'static [u8] = super::tag::SET;
 
+    /// From the members in any order; CER and DER sort them on output.
     pub fn new(members: Vec<T>) -> Self {
         Self {
             members: Asn1Constructed::new(Self::TAG, members),
@@ -81,6 +83,7 @@ impl<T> Asn1SetOf<T> {
         self.members.items()
     }
 
+    /// [`members`](Self::members), owned.
     pub fn into_members(self) -> Vec<T> {
         self.members.into_items()
     }

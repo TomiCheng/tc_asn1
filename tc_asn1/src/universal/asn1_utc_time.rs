@@ -45,6 +45,7 @@ const LEN: usize = 13;
 pub struct Asn1UtcTime(DateTime);
 
 impl Asn1UtcTime {
+    /// The identifier octets, [`tag::UTC_TIME`](crate::tag::UTC_TIME).
     pub const TAG: &'static [u8] = super::tag::UTC_TIME;
 
     /// Year 1950-2049; the other fields follow `DateTime::checked`.
@@ -62,21 +63,27 @@ impl Asn1UtcTime {
         DateTime::checked(year, month, day, hour, minute, second).map(Self)
     }
 
+    /// The year, 1950-2049.
     pub fn year(&self) -> u16 {
         self.0.year
     }
+    /// The month, 1-12.
     pub fn month(&self) -> u8 {
         self.0.month
     }
+    /// The day of the month, 1-31.
     pub fn day(&self) -> u8 {
         self.0.day
     }
+    /// The hour, 0-23.
     pub fn hour(&self) -> u8 {
         self.0.hour
     }
+    /// The minute, 0-59.
     pub fn minute(&self) -> u8 {
         self.0.minute
     }
+    /// The second, 0-59; leap seconds are not represented.
     pub fn second(&self) -> u8 {
         self.0.second
     }

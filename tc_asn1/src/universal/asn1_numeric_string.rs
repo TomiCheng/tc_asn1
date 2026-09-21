@@ -46,8 +46,10 @@ pub struct Asn1NumericString {
 }
 
 impl Asn1NumericString {
+    /// The identifier octets, [`tag::NUMERIC_STRING`](crate::tag::NUMERIC_STRING).
     pub const TAG: &'static [u8] = super::tag::NUMERIC_STRING;
 
+    /// Rejects anything but ASCII digits and space (X.680 §41.4).
     pub fn new(text: &str) -> Result<Self, Asn1Error> {
         if !text.bytes().all(is_numeric) {
             return Err(Asn1Error::MalformedValue);
@@ -57,6 +59,7 @@ impl Asn1NumericString {
         })
     }
 
+    /// The text: digits and spaces.
     pub fn as_str(&self) -> &str {
         &self.text
     }

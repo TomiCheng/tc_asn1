@@ -56,6 +56,7 @@ pub struct Asn1BitString {
 }
 
 impl Asn1BitString {
+    /// The identifier octets, [`tag::BIT_STRING`](crate::tag::BIT_STRING).
     pub const TAG: &'static [u8] = super::tag::BIT_STRING;
 
     /// Every bit of `bytes`, no unused bits.
@@ -89,6 +90,7 @@ impl Asn1BitString {
         self.unused_bits
     }
 
+    /// The number of bits, the unused ones excluded.
     pub fn bit_len(&self) -> usize {
         self.bytes.len() * 8 - usize::from(self.unused_bits)
     }

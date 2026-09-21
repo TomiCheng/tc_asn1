@@ -59,6 +59,7 @@ impl<T> Asn1Constructed<T> {
         &self.items
     }
 
+    /// [`items`](Self::items), owned.
     pub fn into_items(self) -> Vec<T> {
         self.items
     }

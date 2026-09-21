@@ -27,6 +27,7 @@ use crate::{
 pub struct Asn1Null;
 
 impl Asn1Null {
+    /// The identifier octets, [`tag::NULL`](crate::tag::NULL).
     pub const TAG: &'static [u8] = super::tag::NULL;
 }
 

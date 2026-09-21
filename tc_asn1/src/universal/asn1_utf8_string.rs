@@ -42,14 +42,17 @@ pub struct Asn1Utf8String {
 }
 
 impl Asn1Utf8String {
+    /// The identifier octets, [`tag::UTF8_STRING`](crate::tag::UTF8_STRING).
     pub const TAG: &'static [u8] = super::tag::UTF8_STRING;
 
+    /// Copies the text.
     pub fn new(text: &str) -> Self {
         Self {
             text: String::from(text),
         }
     }
 
+    /// The text.
     pub fn as_str(&self) -> &str {
         &self.text
     }

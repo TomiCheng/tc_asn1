@@ -43,6 +43,7 @@ pub struct Asn1Ia5String {
 }
 
 impl Asn1Ia5String {
+    /// The identifier octets, [`tag::IA5_STRING`](crate::tag::IA5_STRING).
     pub const TAG: &'static [u8] = super::tag::IA5_STRING;
 
     /// Rejects any non-ASCII character.
@@ -55,6 +56,7 @@ impl Asn1Ia5String {
         })
     }
 
+    /// The text, ASCII only.
     pub fn as_str(&self) -> &str {
         &self.text
     }

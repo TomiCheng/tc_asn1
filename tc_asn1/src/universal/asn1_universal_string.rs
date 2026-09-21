@@ -37,14 +37,17 @@ pub struct Asn1UniversalString {
 }
 
 impl Asn1UniversalString {
+    /// The identifier octets, [`tag::UNIVERSAL_STRING`](crate::tag::UNIVERSAL_STRING).
     pub const TAG: &'static [u8] = super::tag::UNIVERSAL_STRING;
 
+    /// Copies the text; every `char` is a UCS-4 value, so nothing is rejected.
     pub fn new(text: &str) -> Self {
         Self {
             text: String::from(text),
         }
     }
 
+    /// The text.
     pub fn as_str(&self) -> &str {
         &self.text
     }

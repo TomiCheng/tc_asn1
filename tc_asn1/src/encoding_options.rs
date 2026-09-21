@@ -50,6 +50,7 @@ impl EncodingOptions {
         Self { encoding_type }
     }
 
+    /// The chosen rule set.
     pub const fn encoding_type(&self) -> EncodingType {
         self.encoding_type
     }

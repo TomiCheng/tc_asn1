@@ -45,6 +45,7 @@ const LEN: usize = 15;
 pub struct Asn1GeneralizedTime(DateTime);
 
 impl Asn1GeneralizedTime {
+    /// The identifier octets, [`tag::GENERALIZED_TIME`](crate::tag::GENERALIZED_TIME).
     pub const TAG: &'static [u8] = super::tag::GENERALIZED_TIME;
 
     /// Year 0-9999; the other fields follow `DateTime::checked`.
@@ -62,21 +63,27 @@ impl Asn1GeneralizedTime {
         DateTime::checked(year, month, day, hour, minute, second).map(Self)
     }
 
+    /// The year, 0-9999.
     pub fn year(&self) -> u16 {
         self.0.year
     }
+    /// The month, 1-12.
     pub fn month(&self) -> u8 {
         self.0.month
     }
+    /// The day of the month, 1-31.
     pub fn day(&self) -> u8 {
         self.0.day
     }
+    /// The hour, 0-23.
     pub fn hour(&self) -> u8 {
         self.0.hour
     }
+    /// The minute, 0-59.
     pub fn minute(&self) -> u8 {
         self.0.minute
     }
+    /// The second, 0-59; leap seconds are not represented.
     pub fn second(&self) -> u8 {
         self.0.second
     }

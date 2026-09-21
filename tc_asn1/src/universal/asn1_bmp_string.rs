@@ -39,6 +39,7 @@ pub struct Asn1BmpString {
 }
 
 impl Asn1BmpString {
+    /// The identifier octets, [`tag::BMP_STRING`](crate::tag::BMP_STRING).
     pub const TAG: &'static [u8] = super::tag::BMP_STRING;
 
     /// Rejects any character above `U+FFFF`.
@@ -51,6 +52,7 @@ impl Asn1BmpString {
         })
     }
 
+    /// The text; every character is at most `U+FFFF`.
     pub fn as_str(&self) -> &str {
         &self.text
     }

@@ -55,6 +55,7 @@ macro_rules! iri {
         }
 
         impl $name {
+            #[doc = concat!("The identifier octets, [`tag::", stringify!($tag), "`](crate::tag::", stringify!($tag), ").")]
             pub const TAG: &'static [u8] = tag::$tag;
 
             /// Validates the path and every label, then copies the text.

@@ -32,6 +32,7 @@ pub struct Asn1RelativeOid {
 }
 
 impl Asn1RelativeOid {
+    /// The identifier octets, [`tag::RELATIVE_OID`](crate::tag::RELATIVE_OID).
     pub const TAG: &'static [u8] = super::tag::RELATIVE_OID;
 
     /// From content octets, checked as for an OBJECT IDENTIFIER.
@@ -54,10 +55,12 @@ impl Asn1RelativeOid {
         Ok(Self { bytes })
     }
 
+    /// The content octets: the base-128 subidentifiers.
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
     }
 
+    /// The arcs, one per subidentifier.
     pub fn arcs(&self) -> impl Iterator<Item = u64> + '_ {
         self.bytes
             .split_inclusive(|byte| byte & 0x80 == 0)

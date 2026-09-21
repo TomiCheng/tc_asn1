@@ -52,8 +52,11 @@ pub struct Asn1PrintableString {
 }
 
 impl Asn1PrintableString {
+    /// The identifier octets, [`tag::PRINTABLE_STRING`](crate::tag::PRINTABLE_STRING).
     pub const TAG: &'static [u8] = super::tag::PRINTABLE_STRING;
 
+    /// Rejects any character outside the X.680 §41.4 set: letters, digits,
+    /// space and `' ( ) + , - . / : = ?`.
     pub fn new(text: &str) -> Result<Self, Asn1Error> {
         if !text.bytes().all(is_printable) {
             return Err(Asn1Error::MalformedValue);
@@ -63,6 +66,7 @@ impl Asn1PrintableString {
         })
     }
 
+    /// The text, from the PrintableString set.
     pub fn as_str(&self) -> &str {
         &self.text
     }
