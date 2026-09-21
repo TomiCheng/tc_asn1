@@ -1,10 +1,10 @@
 [workspace]
 resolver = "3"
-members = ["tc_constant_time", "tc_runtime", "tc_zeroize"]
+members = ["tc_asn1"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/TomiCheng/tc_core"
+repository = "https://github.com/TomiCheng/tc_asn1"
