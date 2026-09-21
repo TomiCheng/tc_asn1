@@ -26,35 +26,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Linux x64 default
+          - name: Linux x64
             os: ubuntu-latest
             host: x86_64-unknown-linux-gnu
-            args: ''
-          - name: Linux x64 all features
-            os: ubuntu-latest
-            host: x86_64-unknown-linux-gnu
-            args: --all-features
-          - name: Linux ARM64 all features
+          - name: Linux ARM64
             os: ubuntu-24.04-arm
             host: aarch64-unknown-linux-gnu
-            args: --all-features
-          - name: Linux ARM64 default
-            os: ubuntu-24.04-arm
-            host: aarch64-unknown-linux-gnu
-            args: ''
-          # All features also enables all disable switches: probe separately.
-          - name: Linux ARM64 runtime detection
-            os: ubuntu-24.04-arm
-            host: aarch64-unknown-linux-gnu
-            args: --features aarch64-detect,std
-          - name: macOS ARM64 runtime detection
+          - name: macOS ARM64
             os: macos-14
             host: aarch64-apple-darwin
-            args: --features aarch64-detect,std
-          - name: Windows ARM64 runtime detection
-            os: windows-11-arm
-            host: aarch64-pc-windows-msvc
-            args: --features aarch64-detect,std
+          - name: Windows x64
+            os: windows-latest
+            host: x86_64-pc-windows-msvc
     defaults:
       run:
         shell: bash
@@ -69,15 +52,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.name }}
-      - run: cargo test --locked ${{ matrix.args }}
-      - name: Sample x86 switches
-        if: matrix.name == 'Linux x64 all features'
-        run: |
-          cargo test --locked --features std,disable-x86-avx2
-          cargo test --locked --features std,disable-x86-pclmulqdq
-      - name: Sample ARM switch
-        if: matrix.name == 'Linux ARM64 runtime detection'
-        run: cargo test --locked --features std,aarch64-detect,disable-aarch64-aes
+      - run: cargo test --locked
 
   x86:
     name: Native execution / Linux i686
@@ -94,7 +69,6 @@ jobs:
       - run: rustup target add i686-unknown-linux-gnu
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --locked --target i686-unknown-linux-gnu
-      - run: cargo test --locked --target i686-unknown-linux-gnu --features std
 
   msrv:
     name: MSRV / Rust 1.85.0
@@ -107,59 +81,6 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: 1.85.0
       - run: cargo +1.85.0 test --locked
-      - run: cargo +1.85.0 test --locked --all-features
-
-  floor:
-    name: ARM64 / compile-time ${{ matrix.feature }} floor
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        feature: [aes, dit, sha2, sha3, sm4]
-    steps:
-      - uses: actions/checkout@v7
-      - run: rustup toolchain install stable --profile minimal
-      - run: rustup default stable
-      - run: |
-          rustc -vV | grep -Fx 'host: aarch64-unknown-linux-gnu'
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: floor-${{ matrix.feature }}
-      - name: Probe runner support without target-feature flags
-        id: hardware
-        run: |
-          rustc -o "$RUNNER_TEMP/check-floor" - <<'RS'
-          fn main() {
-              let feature = std::env::args().nth(1).expect("feature argument");
-              let supported = match feature.as_str() {
-                  "aes" => std::arch::is_aarch64_feature_detected!("aes"),
-                  "dit" => std::arch::is_aarch64_feature_detected!("dit"),
-                  "sha2" => std::arch::is_aarch64_feature_detected!("sha2"),
-                  "sha3" => std::arch::is_aarch64_feature_detected!("sha3"),
-                  "sm4" => std::arch::is_aarch64_feature_detected!("sm4"),
-                  _ => panic!("unknown feature"),
-              };
-              println!("supported={supported}");
-          }
-          RS
-          "$RUNNER_TEMP/check-floor" '${{ matrix.feature }}' >> "$GITHUB_OUTPUT"
-      - name: Compile floor tests without runtime backend
-        env:
-          RUSTFLAGS: -C target-feature=+${{ matrix.feature }}
-        run: |
-          rustc --print cfg -C target-feature=+${{ matrix.feature }} | grep -Fx 'target_feature="${{ matrix.feature }}"'
-          cargo check --locked --tests
-      - name: Test floor without runtime backend
-        if: steps.hardware.outputs.supported == 'true'
-        env:
-          RUSTFLAGS: -C target-feature=+${{ matrix.feature }}
-        run: cargo test --locked
-      - name: Report hardware coverage gap
-        if: steps.hardware.outputs.supported != 'true'
-        run: |
-          echo '::notice::Runner lacks ${{ matrix.feature }}; floor tests were compiled but not executed.'
-          echo '${{ matrix.feature }}: compile-only; runner lacks hardware support.' >> "$GITHUB_STEP_SUMMARY"
 
   quality:
     name: Format, Clippy, docs and package
@@ -175,20 +96,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: build-only
-      - run: cargo clippy --locked --all-targets --all-features -- -D warnings
-      - run: cargo doc --locked --no-deps --all-features
-      - run: cargo package --locked -p tc_runtime
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo doc --locked --no-deps
+      - run: cargo package --locked -p tc_asn1
         env:
           # Keep unpacked package manifests outside rust-cache's build tree.
-          CARGO_TARGET_DIR: ${{ runner.temp }}/tc-runtime-package
-      - run: cargo package --locked -p tc_constant_time
-        env:
-          # Keep unpacked package manifests outside rust-cache's build tree.
-          CARGO_TARGET_DIR: ${{ runner.temp }}/tc-constant-time-package
-      - run: cargo package --locked -p tc_zeroize
-        env:
-          # Keep unpacked package manifests outside rust-cache's build tree.
-          CARGO_TARGET_DIR: ${{ runner.temp }}/tc-zeroize-package
+          CARGO_TARGET_DIR: ${{ runner.temp }}/tc-asn1-package
 
   portable:
     name: Cross-architecture contracts
@@ -200,19 +113,9 @@ jobs:
       - run: rustup default stable
       - run: rustup target add wasm32-unknown-unknown aarch64-unknown-none
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --locked --target wasm32-unknown-unknown --all-features
+      - run: cargo check --locked --target wasm32-unknown-unknown
       - run: cargo check --locked --target aarch64-unknown-none
-      - run: cargo check --locked --target aarch64-unknown-none --features aarch64-detect
-      - name: Check dependency-free defaults
+      - name: Check dependency-free build
         run: |
-          test "$(cargo tree --locked -p tc_runtime --target aarch64-unknown-none --edges normal --prefix none | wc -l)" -eq 1
-          test "$(cargo tree --locked -p tc_runtime --target wasm32-unknown-unknown --edges normal --prefix none | wc -l)" -eq 1
-      - name: Check bare-metal backend has only cpufeatures
-        run: |
-          tree="$(cargo tree --locked -p tc_runtime --target aarch64-unknown-none --features aarch64-detect --edges normal --prefix none)"
-          test "$(printf '%s\n' "$tree" | wc -l)" -eq 2
-          printf '%s\n' "$tree" | grep -E '^cpufeatures v'
-          if printf '%s\n' "$tree" | grep -qE '^libc v'; then
-            echo 'bare-metal backend must not depend on libc' >&2
-            exit 1
-          fi
+          test "$(cargo tree --locked -p tc_asn1 --target aarch64-unknown-none --edges normal --prefix none | wc -l)" -eq 1
+          test "$(cargo tree --locked -p tc_asn1 --target wasm32-unknown-unknown --edges normal --prefix none | wc -l)" -eq 1
