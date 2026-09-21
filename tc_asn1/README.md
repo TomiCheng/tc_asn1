@@ -1,5 +1,11 @@
 # tc_asn1
 
+[![crates.io](https://img.shields.io/crates/v/tc_asn1.svg)](https://crates.io/crates/tc_asn1)
+[![docs.rs](https://docs.rs/tc_asn1/badge.svg)](https://docs.rs/tc_asn1)
+[![CI](https://github.com/TomiCheng/tc_asn1/actions/workflows/ci.yml/badge.svg)](https://github.com/TomiCheng/tc_asn1/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](#license)
+![rustc](https://img.shields.io/badge/rustc-1.85+-blue.svg)
+
 A toolkit for writing ASN.1 schemas as Rust types.
 
 An ASN.1 module defines structures — a certificate, a signed message, a key
@@ -254,3 +260,8 @@ constructed form of the string types, for which `Asn1Constructed` with the
 `CONSTRUCTED_*` tag serves. UTCTime and GeneralizedTime accept the RFC 5280
 forms only, so a UTC offset, omitted seconds or fractional seconds are
 rejected even under BER.
+
+## License
+
+Licensed under either the [MIT license](LICENSE-MIT) or the
+[Apache License, Version 2.0](LICENSE-APACHE), at your option.
