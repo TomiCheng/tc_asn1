@@ -1,9 +1,13 @@
 [package]
 name = "tc_asn1"
-description = "BER, CER and DER codecs for the ASN.1 universal types."
 version = "0.1.0"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-
-[dependencies]
+description = "BER, CER and DER codecs for the ASN.1 universal types."
+readme = "README.md"
+documentation = "https://docs.rs/tc_asn1"
+keywords = ["asn1", "der", "ber", "x690", "no-std"]
+categories = ["encoding", "parser-implementations", "no-std"]
+include = ["src/**", "tests/**", "README.md", "CHANGELOG.md", "LICENSE-MIT", "LICENSE-APACHE"]
