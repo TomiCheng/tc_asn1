@@ -16,10 +16,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Every crate README opens with the badge block: crates.io, docs.rs, CI,
   license, and rustc.
 
-The crate list, feature summary, and workspace-wide checks live in the root
-[README.md](README.md); read it rather than restating it here. No crate depends
-on another, and default builds have no dependencies at all — CI enforces that
-with `cargo tree` line counts.
+The crate list and workspace-wide checks live in the root
+[README.md](README.md); read it rather than restating it here. `tc_asn1` is
+`no_std` + `alloc` with no feature flags and no dependencies at all — CI
+enforces that with `cargo tree` line counts on the `wasm32-unknown-unknown` and
+`aarch64-unknown-none` targets. The crate carries no protocol knowledge: OIDs,
+extensions and profiles belong to the crates built on it, not here (see the
+"Not here" section of the crate docs).
 
 ## Conventions
 
@@ -28,16 +31,17 @@ Each crate ships its own `README.md`, `CHANGELOG.md`, `LICENSE-MIT`,
 entries are written as `## <version> - Unreleased` and dated in a separate
 commit at release, with `### Added` and `### Compatibility` sections.
 
-Adding a crate to the workspace means four edits beyond the crate itself: the
+Adding a crate to the workspace means five edits beyond the crate itself: the
 `members` list, a `cargo package --locked -p <crate>` step in the CI `quality`
-job (the only place crates are verified individually), a row in the root
-`README.md`, and workspace inheritance for `edition`, `rust-version`, `license`,
-and `repository`.
+job (the only place crates are verified individually), a `cargo tree` line
+count in the CI `portable` job, a row in the root `README.md`, and workspace
+inheritance for `edition`, `rust-version`, `license`, and `repository`.
 
 Documentation is part of the contract: crates use `#![deny(missing_docs)]`,
 doctests carry the executable examples, and CI runs `cargo doc` with
 `RUSTDOCFLAGS: -D warnings`. An additive public API change belongs in the crate
-README's contract tables and in the changelog, not only in the code.
+README's contract tables — "Tool types" and "Universal types" in
+`tc_asn1/README.md` — and in the changelog, not only in the code.
 
 Work happens on `feat/*` branches off `develop`; pull requests target `develop`,
 which merges to `main`. Commit messages use an imperative subject and a wrapped
