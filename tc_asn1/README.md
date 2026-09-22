@@ -101,23 +101,32 @@ other constants, and `new` takes anything else such as indefinite BER.
 
 ### Decoding
 
-`DecodeInner` parses the SEQUENCE and reads the fields in order through
-`Children`: `get` for a required field, `get_explicit_opt` for the tagged
+`DecodeContent` opens `Children::from_contents` and reads the fields in
+order: `get` for a required field, `get_explicit_opt` for the tagged
 OPTIONAL one, which looks at the next element and leaves it alone when the
-tag is not `A0`, and `end` to reject anything left over. `Decode` adds the
-standalone entry points and needs no code.
+tag is not `A0`, and `end` to reject anything left over. `DecodeInner`
+parses the outer SEQUENCE, checks its tag and delegates its contents to
+`DecodeContent` using the same context. This two-layer shape also lets
+IMPLICIT fields reuse the contents decoder. `Decode` adds the standalone
+entry points and needs no code.
 
 ```rust
-use tc_asn1::{Asn1Error, Asn1Ref, Decode, DecodeInner, DecodingContext, DecodingOptions};
+use tc_asn1::{Asn1Error, Asn1Ref, Children, Decode, DecodeContent, DecodeInner, DecodingContext, DecodingOptions};
+
+impl DecodeContent for Note {
+    fn decode_content(value: &[u8], context: &mut DecodingContext) -> Result<Self, Asn1Error> {
+        let mut fields = Children::from_contents(value, context)?;
+        let text = fields.get()?;
+        let priority = fields.get_explicit_opt([0xA0])?;
+        fields.end()?;
+        Ok(Self { text, priority })
+    }
+}
 
 impl DecodeInner for Note {
     fn decode_inner(buff: &[u8], context: &mut DecodingContext) -> Result<(usize, Self), Asn1Error> {
         let element = Asn1Ref::parse(buff, context)?.assert_tag(Self::TAG)?;
-        let mut fields = element.children(context)?;
-        let text = fields.get()?;
-        let priority = fields.get_explicit_opt([0xA0])?;
-        fields.end()?;
-        Ok((element.total_len(), Self { text, priority }))
+        Ok((element.total_len(), Self::decode_content(element.value(), context)?))
     }
 }
 impl Decode for Note {}
@@ -213,7 +222,7 @@ with, or what stands in for one.
 | Type | Role |
 | --- | --- |
 | `Asn1Ref` | One TLV borrowed from the input: tag, class, contents, end-of-contents octets, and the whole thing as `raw()` for a signature to cover |
-| `Children` | The elements of a constructed value, read in order: `get`, `get_explicit` and `get_implicit` for required fields; `get_opt`, `get_explicit_opt` and `get_implicit_opt` for OPTIONAL fields; `get_default`, `get_explicit_default` and `get_implicit_default` for DEFAULT fields; `end` to reject leftovers |
+| `Children` | The elements of a constructed value, read in order; `from_contents` opens a reader directly over contents octets. `get`, `get_explicit` and `get_implicit` read required fields; `get_opt`, `get_explicit_opt` and `get_implicit_opt` read OPTIONAL fields; `get_default`, `get_explicit_default` and `get_implicit_default` read DEFAULT fields; `collect_all` decodes all remaining elements into a vector; `end` rejects leftovers |
 | `Explicit`, `Implicit` | The encoding side of a tagged field: `Explicit` wraps the value's whole TLV under the tag, `Implicit` writes the value's contents under it |
 | `Asn1Any` | An element kept as the octets it was read with, written back unchanged under any rules; for what a structure carries but does not interpret |
 | `Asn1Constructed<T>` | A constructed value under any tag holding elements of one type: the mechanism behind SEQUENCE OF, SET OF and `[n] IMPLICIT SEQUENCE OF` |

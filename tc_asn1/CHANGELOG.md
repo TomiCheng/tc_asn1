@@ -6,6 +6,11 @@ All notable changes to `tc_asn1` are documented in this file.
 
 ### Added
 
+- `Children::from_contents` for reading fields directly from contents
+  octets with the decoding context's depth, length and child count limits.
+- `Children::collect_all` for decoding all remaining elements into a vector.
+- `DecodeContent` for `Asn1SequenceOf<T>` and `Asn1SetOf<T>`, enabling
+  IMPLICIT container fields through the tagged readers.
 - `Children::get_explicit` for required EXPLICIT fields, checking the
   wrapper tag and requiring exactly one inner element.
 - `Children::get_implicit` for required IMPLICIT fields, decoding the

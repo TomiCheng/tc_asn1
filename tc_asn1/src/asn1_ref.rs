@@ -11,6 +11,7 @@ use crate::error::Asn1Error;
 use crate::traits::DecodeInner;
 use crate::traits::encode::len_octets;
 use crate::{DecodeContent, DecodingContext, DecodingOptions, Tagged};
+use alloc::vec::Vec;
 
 /// The class bits of an identifier octet (X.690 §8.1.2.2).
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -243,6 +244,20 @@ impl<'a, 'b> Children<'a, 'b> {
         }
     }
 
+    /// The elements in contents octets without an outer tag or length,
+    /// for reading fields under an IMPLICIT tag through `DecodeContent`.
+    /// Enters one level of nesting, returning `DepthExceeded` at the limit;
+    /// dropping the reader restores the previous depth. Content length and
+    /// child count limits apply as elements are read, along with the
+    /// context's DER header checks. No outer constructed bit is checked.
+    /// Variable time: branches only on the encoding structure.
+    pub fn from_contents(
+        rest: &'a [u8],
+        context: &'b mut DecodingContext,
+    ) -> Result<Self, Asn1Error> {
+        Ok(Self::new(rest, context.enter()?))
+    }
+
     /// The context at this depth, for decoding an element by hand.
     pub fn context(&mut self) -> &mut DecodingContext {
         self.scope.context()
@@ -418,6 +433,15 @@ impl<'a, 'b> Children<'a, 'b> {
             Some(Ok(_)) => Err(Asn1Error::TrailingData),
         }
     }
+
+    /// Every remaining element as a `T`, in order.
+    pub fn collect_all<T: DecodeInner>(&mut self) -> Result<Vec<T>, Asn1Error> {
+        let mut items = Vec::new();
+        while let Some(child) = self.next() {
+            items.push(child?.decode_as::<T>(self.context())?);
+        }
+        Ok(items)
+    }
 }
 
 impl<'a> Iterator for Children<'a, '_> {
@@ -519,10 +543,10 @@ fn parse_len(buff: &[u8]) -> Result<(usize, Option<usize>), Asn1Error> {
 mod tests {
     use alloc::vec::Vec;
 
-    use super::{Asn1Class, Asn1Ref};
+    use super::{Asn1Class, Asn1Ref, Children};
     use crate::{
-        Asn1Any, Asn1Boolean, Asn1Error, Asn1Integer, Asn1Null, Asn1OctetString, DecodingContext,
-        DecodingOptions,
+        Asn1Any, Asn1Boolean, Asn1Error, Asn1Integer, Asn1Null, Asn1OctetString, Asn1SequenceOf,
+        Asn1SetOf, DecodingContext, DecodingOptions,
     };
 
     fn ber() -> DecodingContext {
@@ -840,6 +864,81 @@ mod tests {
                 children.get_implicit_default([0x81], Asn1Boolean::from(false)),
                 Err(Asn1Error::MalformedValue)
             );
+        }
+    }
+
+    #[test]
+    fn from_contents_reads_fields_and_restores_the_previous_depth() {
+        let mut context = ber();
+        let mut parent = context.enter().unwrap();
+        {
+            let mut fields =
+                Children::from_contents(&[0x02, 0x01, 0x01, 0x02, 0x01, 0x02], parent.context())
+                    .unwrap();
+            assert_eq!(fields.context().depth(), 2);
+            assert_eq!(fields.get::<Asn1Integer>().unwrap(), Asn1Integer::from(1));
+            assert_eq!(fields.get::<Asn1Integer>().unwrap(), Asn1Integer::from(2));
+            fields.end().unwrap();
+        }
+        assert_eq!(parent.context().depth(), 1);
+    }
+
+    #[test]
+    fn from_contents_rejects_entering_past_the_depth_limit() {
+        let mut context = DecodingContext::new(DecodingOptions::new(1, 1024, 16));
+        let mut parent = context.enter().unwrap();
+        assert!(matches!(
+            Children::from_contents(&[], parent.context()),
+            Err(Asn1Error::DepthExceeded)
+        ));
+        assert_eq!(parent.context().depth(), 1);
+    }
+
+    #[test]
+    fn from_contents_enforces_the_child_count_limit() {
+        let mut context = DecodingContext::new(DecodingOptions::new(32, 1024, 2));
+        {
+            let mut fields = Children::from_contents(
+                &[0x02, 0x01, 0x01, 0x02, 0x01, 0x02, 0x02, 0x01, 0x03],
+                &mut context,
+            )
+            .unwrap();
+            assert_eq!(
+                fields.collect_all::<Asn1Integer>(),
+                Err(Asn1Error::ChildrenExceeded)
+            );
+        }
+        assert_eq!(context.depth(), 0);
+    }
+
+    #[test]
+    fn from_contents_keeps_der_header_checks() {
+        let mut context = der();
+        let mut fields = Children::from_contents(&[0x02, 0x81, 0x01, 0x01], &mut context).unwrap();
+        assert_eq!(fields.get::<Asn1Integer>(), Err(Asn1Error::NotDer));
+    }
+
+    #[test]
+    fn implicit_containers_decode_their_contents() {
+        let wire = [0x30, 0x08, 0xA1, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x02];
+        let expected = [Asn1Integer::from(1), Asn1Integer::from(2)];
+        for mut context in [ber(), der()] {
+            let element = Asn1Ref::parse(&wire, &mut context).unwrap();
+            let mut fields = element.children(&mut context).unwrap();
+            let sequence = fields
+                .get_implicit::<Asn1SequenceOf<Asn1Integer>>([0xA1])
+                .unwrap();
+            assert_eq!(sequence.elements(), expected);
+            fields.end().unwrap();
+
+            let mut fields = element.children(&mut context).unwrap();
+            let set = fields
+                .get_implicit_opt::<Asn1SetOf<Asn1Integer>>([0xA1])
+                .unwrap()
+                .unwrap();
+            assert_eq!(set.members(), expected);
+            fields.end().unwrap();
+            assert_eq!(context.depth(), 0);
         }
     }
 

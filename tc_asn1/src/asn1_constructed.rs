@@ -76,14 +76,7 @@ impl<T: DecodeInner> DecodeInner for Asn1Constructed<T> {
         if !element.is_constructed() {
             return Err(Asn1Error::UnexpectedTag);
         }
-        let mut children = element.children(context)?;
-        let mut items = Vec::new();
-        while let Some(child) = children.next() {
-            let child = child?;
-            let (used, item) = T::decode_inner(child.raw(), children.context())?;
-            debug_assert_eq!(used, child.total_len(), "child length disagrees");
-            items.push(item);
-        }
+        let items = element.children(context)?.collect_all()?;
         Ok((
             element.total_len(),
             Self {

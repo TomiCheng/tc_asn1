@@ -13,8 +13,8 @@ use core::hash::{Hash, Hasher};
 use super::cer_common::constructed_tag;
 use crate::traits::encode::{default_encode, default_encoded_len};
 use crate::{
-    Asn1Constructed, Asn1Error, Decode, DecodeInner, DecodingContext, Encode, EncodeContent,
-    EncodeTagged, EncodingOptions, Tagged,
+    Asn1Constructed, Asn1Error, Children, Decode, DecodeContent, DecodeInner, DecodingContext,
+    Encode, EncodeContent, EncodeTagged, EncodingOptions, Tagged,
 };
 
 /// A homogeneous SET OF. Construction and decoding keep the given order; CER
@@ -86,6 +86,13 @@ impl<T> Asn1SetOf<T> {
     /// [`members`](Self::members), owned.
     pub fn into_members(self) -> Vec<T> {
         self.members.into_items()
+    }
+}
+
+impl<T: DecodeInner> DecodeContent for Asn1SetOf<T> {
+    fn decode_content(value: &[u8], context: &mut DecodingContext) -> Result<Self, Asn1Error> {
+        let elements = Children::from_contents(value, context)?.collect_all()?;
+        Ok(Self::new(elements))
     }
 }
 
