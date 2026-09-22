@@ -310,8 +310,11 @@ impl<'a, 'b> Children<'a, 'b> {
     /// and `TrailingData` when another element follows inside the wrapper.
     /// The wrapper must hold exactly one element.
     /// Variable time: branches only on the encoding structure.
-    pub fn get_explicit<T: DecodeInner>(&mut self, tag: &[u8]) -> Result<T, Asn1Error> {
-        let wrapper = self.next().ok_or(Asn1Error::Truncated)??.assert_tag(tag)?;
+    pub fn get_explicit<T: DecodeInner>(&mut self, tag: impl AsRef<[u8]>) -> Result<T, Asn1Error> {
+        let wrapper = self
+            .next()
+            .ok_or(Asn1Error::Truncated)??
+            .assert_tag(tag.as_ref())?;
         let mut inner = wrapper.children(self.context())?;
         let value = inner.get::<T>()?;
         inner.end()?;
@@ -361,8 +364,14 @@ impl<'a, 'b> Children<'a, 'b> {
     /// next element and `UnexpectedTag` when its identifier is not `tag`.
     /// Contents are checked under the caller's decoding context.
     /// Variable time: branches only on the encoding structure.
-    pub fn get_implicit<T: DecodeContent>(&mut self, tag: &[u8]) -> Result<T, Asn1Error> {
-        let element = self.next().ok_or(Asn1Error::Truncated)??.assert_tag(tag)?;
+    pub fn get_implicit<T: DecodeContent>(
+        &mut self,
+        tag: impl AsRef<[u8]>,
+    ) -> Result<T, Asn1Error> {
+        let element = self
+            .next()
+            .ok_or(Asn1Error::Truncated)??
+            .assert_tag(tag.as_ref())?;
         T::decode_content(element.value(), self.context())
     }
 
@@ -373,7 +382,7 @@ impl<'a, 'b> Children<'a, 'b> {
     /// Variable time: branches only on the encoding structure.
     pub fn get_implicit_default<T: DecodeContent + PartialEq>(
         &mut self,
-        tag: &[u8],
+        tag: impl AsRef<[u8]>,
         default: T,
     ) -> Result<T, Asn1Error> {
         match self.get_implicit_opt::<T>(tag)? {
@@ -693,7 +702,7 @@ mod tests {
             let mut children = element.children(&mut context).unwrap();
             children.peek().unwrap().unwrap();
             assert_eq!(
-                children.get_explicit::<Asn1Integer>(&[0xA0]).unwrap(),
+                children.get_explicit::<Asn1Integer>([0xA0]).unwrap(),
                 Asn1Integer::from(7)
             );
             assert_eq!(children.context().depth(), 1);
@@ -725,7 +734,10 @@ mod tests {
             let mut context = ber();
             let element = Asn1Ref::parse(wire, &mut context).unwrap();
             let mut children = element.children(&mut context).unwrap();
-            assert_eq!(children.get_explicit::<Asn1Integer>(&[0xA0]), Err(expected));
+            assert_eq!(
+                children.get_explicit::<Asn1Integer>(&[0xA0][..]),
+                Err(expected)
+            );
             assert_eq!(children.context().depth(), 1);
         }
     }
@@ -738,7 +750,7 @@ mod tests {
             let mut children = element.children(&mut context).unwrap();
             children.peek().unwrap().unwrap();
             assert_eq!(
-                children.get_implicit::<Asn1Integer>(&[0x81]).unwrap(),
+                children.get_implicit::<Asn1Integer>([0x81]).unwrap(),
                 Asn1Integer::from(7)
             );
             assert_eq!(children.get::<Asn1Null>().unwrap(), Asn1Null);
@@ -757,7 +769,10 @@ mod tests {
             let mut context = ber();
             let element = Asn1Ref::parse(wire, &mut context).unwrap();
             let mut children = element.children(&mut context).unwrap();
-            assert_eq!(children.get_implicit::<Asn1Integer>(&[0x81]), Err(expected));
+            assert_eq!(
+                children.get_implicit::<Asn1Integer>(&[0x81][..]),
+                Err(expected)
+            );
         }
     }
 
@@ -770,7 +785,7 @@ mod tests {
         ] {
             let element = Asn1Ref::parse(&wire, &mut context).unwrap();
             let mut children = element.children(&mut context).unwrap();
-            assert_eq!(children.get_implicit::<Asn1Boolean>(&[0x81]), expected);
+            assert_eq!(children.get_implicit::<Asn1Boolean>([0x81]), expected);
         }
     }
 
@@ -781,7 +796,7 @@ mod tests {
                 let element = Asn1Ref::parse(wire, &mut context).unwrap();
                 let mut children = element.children(&mut context).unwrap();
                 assert_eq!(
-                    children.get_implicit_default(&[0x81], Asn1Boolean::from(false)),
+                    children.get_implicit_default(&[0x81][..], Asn1Boolean::from(false)),
                     Ok(Asn1Boolean::from(false))
                 );
                 if wire.len() > 2 {
@@ -808,7 +823,7 @@ mod tests {
                 let element = Asn1Ref::parse(&wire, &mut context).unwrap();
                 let mut children = element.children(&mut context).unwrap();
                 assert_eq!(
-                    children.get_implicit_default(&[0x81], Asn1Boolean::from(false)),
+                    children.get_implicit_default([0x81], Asn1Boolean::from(false)),
                     expected
                 );
                 children.end().unwrap();
@@ -822,7 +837,7 @@ mod tests {
             let element = Asn1Ref::parse(&[0x30, 0x02, 0x81, 0x00], &mut context).unwrap();
             let mut children = element.children(&mut context).unwrap();
             assert_eq!(
-                children.get_implicit_default(&[0x81], Asn1Boolean::from(false)),
+                children.get_implicit_default([0x81], Asn1Boolean::from(false)),
                 Err(Asn1Error::MalformedValue)
             );
         }

@@ -2,6 +2,23 @@
 
 All notable changes to `tc_asn1` are documented in this file.
 
+## 0.1.1 - Unreleased
+
+### Added
+
+- `Children::get_explicit` for required EXPLICIT fields, checking the
+  wrapper tag and requiring exactly one inner element.
+- `Children::get_implicit` for required IMPLICIT fields, decoding the
+  contents under the caller's tag and decoding context.
+- `Children::get_implicit_default` for IMPLICIT fields with a DEFAULT,
+  rejecting explicitly encoded default values under DER.
+- All three readers accept `impl AsRef<[u8]>`, matching the existing
+  tagged readers and supporting both tag arrays and borrowed slices.
+
+### Compatibility
+
+- Additive. Every 0.1.0 program compiles and behaves the same.
+
 ## 0.1.0 - 2026-09-21
 
 Initial release.

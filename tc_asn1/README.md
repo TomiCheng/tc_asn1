@@ -213,7 +213,7 @@ with, or what stands in for one.
 | Type | Role |
 | --- | --- |
 | `Asn1Ref` | One TLV borrowed from the input: tag, class, contents, end-of-contents octets, and the whole thing as `raw()` for a signature to cover |
-| `Children` | The elements of a constructed value, read in order: `get` for a required field, `get_opt` and `get_default` for OPTIONAL and DEFAULT, `get_explicit_opt`, `get_explicit_default` and `get_implicit_opt` for tagged fields, `end` to reject leftovers |
+| `Children` | The elements of a constructed value, read in order: `get`, `get_explicit` and `get_implicit` for required fields; `get_opt`, `get_explicit_opt` and `get_implicit_opt` for OPTIONAL fields; `get_default`, `get_explicit_default` and `get_implicit_default` for DEFAULT fields; `end` to reject leftovers |
 | `Explicit`, `Implicit` | The encoding side of a tagged field: `Explicit` wraps the value's whole TLV under the tag, `Implicit` writes the value's contents under it |
 | `Asn1Any` | An element kept as the octets it was read with, written back unchanged under any rules; for what a structure carries but does not interpret |
 | `Asn1Constructed<T>` | A constructed value under any tag holding elements of one type: the mechanism behind SEQUENCE OF, SET OF and `[n] IMPLICIT SEQUENCE OF` |
