@@ -27,8 +27,9 @@
 //!   | A complete TLV under the type's own tag | [`DecodeInner`] | [`Encode`] |
 //!   | The standalone entry points | [`Decode`] | — |
 //!
-//!   [`DecodeInner`] and [`EncodeContent`] do the work, the rest are
-//!   one-liners; [`Tagged`] names the type's own tag. [`Explicit`] and
+//!   [`DecodeContent`] reads the fields and [`EncodeContent`] writes them;
+//!   [`DecodeInner`] checks the outer TLV before delegating to
+//!   [`DecodeContent`]. [`Tagged`] names the type's own tag. [`Explicit`] and
 //!   [`Implicit`] write tagged fields, [`Children::get_explicit_opt`] and
 //!   friends read them.
 //! - [`NamedOid`] for constant tables of OIDs with names, checked when
@@ -61,11 +62,16 @@
 //!
 //! # Defining a structure
 //!
-//! A SEQUENCE with fields is a struct implementing [`DecodeInner`] (parse
-//! the outer element, read the fields through [`Asn1Ref::children`], call
-//! [`Children::end`]) and [`EncodeContent`] (write the fields back to
-//! back), plus the empty [`Decode`], [`EncodeTagged`] and two-line
-//! [`Encode`] and [`Tagged`] impls. A CHOICE dispatches on the tag in
+//! A SEQUENCE with fields uses two decoding implementations:
+//! [`DecodeContent`] opens [`Children::from_contents`], reads the fields
+//! and calls [`Children::end`]; [`DecodeInner`] parses the outer element,
+//! checks its tag and delegates its contents to [`DecodeContent`] using
+//! the same context. This lets the field decoder also read the structure
+//! under an IMPLICIT tag.
+//!
+//! [`EncodeContent`] writes the fields back to back, with empty [`Decode`]
+//! and [`EncodeTagged`] impls and small [`Encode`] and [`Tagged`] impls
+//! completing the type. A CHOICE dispatches on the tag in
 //! `DecodeInner` and on the variant in `Encode`. Each type states what it
 //! validates and whether it runs in constant time; nothing in this crate
 //! handles secret data, so every method is variable time and documents it.

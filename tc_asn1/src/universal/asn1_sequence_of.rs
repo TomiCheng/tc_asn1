@@ -4,15 +4,15 @@
 //!
 //! A SEQUENCE with fields of different types is not this; such a structure
 //! implements the traits itself and reads its fields through
-//! [`Children`](crate::Children).
+//! [`Children`](Children).
 
 use alloc::vec::Vec;
 
 use super::cer_common::constructed_tag;
 use crate::traits::encode::{default_encode, default_encoded_len};
 use crate::{
-    Asn1Constructed, Asn1Error, Decode, DecodeInner, DecodingContext, Encode, EncodeContent,
-    EncodeTagged, EncodingOptions, Tagged,
+    Asn1Constructed, Asn1Error, Children, Decode, DecodeContent, DecodeInner, DecodingContext,
+    Encode, EncodeContent, EncodeTagged, EncodingOptions, Tagged,
 };
 
 /// A homogeneous SEQUENCE OF. Order is significant, so every rule set writes
@@ -59,6 +59,13 @@ impl<T> Asn1SequenceOf<T> {
     }
 }
 
+impl<T: DecodeInner> DecodeContent for Asn1SequenceOf<T> {
+    fn decode_content(value: &[u8], context: &mut DecodingContext) -> Result<Self, Asn1Error> {
+        let elements = Children::from_contents(value, context)?.collect_all()?;
+        Ok(Self::new(elements))
+    }
+}
+
 impl<T: DecodeInner> DecodeInner for Asn1SequenceOf<T> {
     /// A SET or a primitive tag is `UnexpectedTag`; so is an element that
     /// is not a `T`. Variable time: branches only on the encoding structure.
@@ -75,6 +82,7 @@ impl<T: DecodeInner> DecodeInner for Asn1SequenceOf<T> {
 }
 
 impl<T: DecodeInner> Decode for Asn1SequenceOf<T> {}
+
 impl<T> Tagged for Asn1SequenceOf<T> {
     const TAG: &'static [u8] = Self::TAG;
 }

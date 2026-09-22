@@ -11,6 +11,7 @@ use crate::error::Asn1Error;
 use crate::traits::DecodeInner;
 use crate::traits::encode::len_octets;
 use crate::{DecodeContent, DecodingContext, DecodingOptions, Tagged};
+use alloc::vec::Vec;
 
 /// The class bits of an identifier octet (X.690 §8.1.2.2).
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -243,6 +244,20 @@ impl<'a, 'b> Children<'a, 'b> {
         }
     }
 
+    /// The elements in contents octets without an outer tag or length,
+    /// for reading fields under an IMPLICIT tag through `DecodeContent`.
+    /// Enters one level of nesting, returning `DepthExceeded` at the limit;
+    /// dropping the reader restores the previous depth. Content length and
+    /// child count limits apply as elements are read, along with the
+    /// context's DER header checks. No outer constructed bit is checked.
+    /// Variable time: branches only on the encoding structure.
+    pub fn from_contents(
+        rest: &'a [u8],
+        context: &'b mut DecodingContext,
+    ) -> Result<Self, Asn1Error> {
+        Ok(Self::new(rest, context.enter()?))
+    }
+
     /// The context at this depth, for decoding an element by hand.
     pub fn context(&mut self) -> &mut DecodingContext {
         self.scope.context()
@@ -303,6 +318,24 @@ impl<'a, 'b> Children<'a, 'b> {
         }
     }
 
+    /// A required `[n] EXPLICIT T` field, `tag` being the wrapper's
+    /// identifier octets (`[0xA0]` for `[0]`): the value inside the next
+    /// element. `Truncated` when the field or its inner value is missing,
+    /// `UnexpectedTag` when the wrapper or inner type has the wrong tag,
+    /// and `TrailingData` when another element follows inside the wrapper.
+    /// The wrapper must hold exactly one element.
+    /// Variable time: branches only on the encoding structure.
+    pub fn get_explicit<T: DecodeInner>(&mut self, tag: impl AsRef<[u8]>) -> Result<T, Asn1Error> {
+        let wrapper = self
+            .next()
+            .ok_or(Asn1Error::Truncated)??
+            .assert_tag(tag.as_ref())?;
+        let mut inner = wrapper.children(self.context())?;
+        let value = inner.get::<T>()?;
+        inner.end()?;
+        Ok(value)
+    }
+
     /// A `[n] EXPLICIT T OPTIONAL` field, `tag` being the wrapper's
     /// identifier octets (`[0xA0]` for `[0]`): the value inside when the
     /// next element carries that tag, `None` otherwise, leaving the element
@@ -340,6 +373,40 @@ impl<'a, 'b> Children<'a, 'b> {
         }
     }
 
+    /// A required `[n] IMPLICIT T` field, `tag` being the identifier octets
+    /// that replace `T`'s own (`[0x81]` for `[1]` on a primitive type): the
+    /// next element's contents decoded as `T`. `Truncated` when there is no
+    /// next element and `UnexpectedTag` when its identifier is not `tag`.
+    /// Contents are checked under the caller's decoding context.
+    /// Variable time: branches only on the encoding structure.
+    pub fn get_implicit<T: DecodeContent>(
+        &mut self,
+        tag: impl AsRef<[u8]>,
+    ) -> Result<T, Asn1Error> {
+        let element = self
+            .next()
+            .ok_or(Asn1Error::Truncated)??
+            .assert_tag(tag.as_ref())?;
+        T::decode_content(element.value(), self.context())
+    }
+
+    /// [`get_implicit_opt`](Self::get_implicit_opt) for a field with a
+    /// DEFAULT: `default` when the field is absent, leaving a nonmatching
+    /// element for the next field. Under DER a written value equal to the
+    /// default is `NotDer` (X.690 §11.5).
+    /// Variable time: branches only on the encoding structure.
+    pub fn get_implicit_default<T: DecodeContent + PartialEq>(
+        &mut self,
+        tag: impl AsRef<[u8]>,
+        default: T,
+    ) -> Result<T, Asn1Error> {
+        match self.get_implicit_opt::<T>(tag)? {
+            Some(value) if value == default && self.context().is_der() => Err(Asn1Error::NotDer),
+            Some(value) => Ok(value),
+            None => Ok(default),
+        }
+    }
+
     /// A `[n] IMPLICIT T OPTIONAL` field, `tag` being the identifier octets
     /// that replace `T`'s own (`[0x81]` for `[1]` on a primitive type): the
     /// contents decoded as `T` when the next element carries that tag,
@@ -365,6 +432,15 @@ impl<'a, 'b> Children<'a, 'b> {
             Some(Err(e)) => Err(e),
             Some(Ok(_)) => Err(Asn1Error::TrailingData),
         }
+    }
+
+    /// Every remaining element as a `T`, in order.
+    pub fn collect_all<T: DecodeInner>(&mut self) -> Result<Vec<T>, Asn1Error> {
+        let mut items = Vec::new();
+        while let Some(child) = self.next() {
+            items.push(child?.decode_as::<T>(self.context())?);
+        }
+        Ok(items)
     }
 }
 
@@ -467,10 +543,10 @@ fn parse_len(buff: &[u8]) -> Result<(usize, Option<usize>), Asn1Error> {
 mod tests {
     use alloc::vec::Vec;
 
-    use super::{Asn1Class, Asn1Ref};
+    use super::{Asn1Class, Asn1Ref, Children};
     use crate::{
-        Asn1Any, Asn1Boolean, Asn1Error, Asn1Integer, Asn1Null, Asn1OctetString, DecodingContext,
-        DecodingOptions,
+        Asn1Any, Asn1Boolean, Asn1Error, Asn1Integer, Asn1Null, Asn1OctetString, Asn1SequenceOf,
+        Asn1SetOf, DecodingContext, DecodingOptions,
     };
 
     fn ber() -> DecodingContext {
@@ -640,6 +716,230 @@ mod tests {
             children.get_default(Asn1Boolean::from(false)).unwrap(),
             Asn1Boolean::from(false)
         );
+    }
+
+    #[test]
+    fn explicit_reads_one_wrapped_value_and_preserves_the_next_field() {
+        let wire = [0x30, 0x07, 0xA0, 0x03, 0x02, 0x01, 0x07, 0x05, 0x00];
+        for mut context in [ber(), der()] {
+            let element = Asn1Ref::parse(&wire, &mut context).unwrap();
+            let mut children = element.children(&mut context).unwrap();
+            children.peek().unwrap().unwrap();
+            assert_eq!(
+                children.get_explicit::<Asn1Integer>([0xA0]).unwrap(),
+                Asn1Integer::from(7)
+            );
+            assert_eq!(children.context().depth(), 1);
+            assert_eq!(children.get::<Asn1Null>().unwrap(), Asn1Null);
+            children.end().unwrap();
+            assert_eq!(context.depth(), 0);
+        }
+    }
+
+    #[test]
+    fn explicit_rejects_missing_wrong_or_extra_elements() {
+        for (wire, expected) in [
+            (&[0x30, 0x00][..], Asn1Error::Truncated),
+            (&[0x30, 0x02, 0xA0, 0x00], Asn1Error::Truncated),
+            (
+                &[0x30, 0x05, 0xA1, 0x03, 0x02, 0x01, 0x07],
+                Asn1Error::UnexpectedTag,
+            ),
+            (
+                &[0x30, 0x04, 0xA0, 0x02, 0x05, 0x00],
+                Asn1Error::UnexpectedTag,
+            ),
+            (
+                &[0x30, 0x08, 0xA0, 0x06, 0x02, 0x01, 0x07, 0x02, 0x01, 0x08],
+                Asn1Error::TrailingData,
+            ),
+            (&[0x30, 0x03, 0xA0, 0x01, 0x02], Asn1Error::Truncated),
+        ] {
+            let mut context = ber();
+            let element = Asn1Ref::parse(wire, &mut context).unwrap();
+            let mut children = element.children(&mut context).unwrap();
+            assert_eq!(
+                children.get_explicit::<Asn1Integer>(&[0xA0][..]),
+                Err(expected)
+            );
+            assert_eq!(children.context().depth(), 1);
+        }
+    }
+
+    #[test]
+    fn implicit_reads_contents_and_preserves_the_next_field() {
+        let wire = [0x30, 0x05, 0x81, 0x01, 0x07, 0x05, 0x00];
+        for mut context in [ber(), der()] {
+            let element = Asn1Ref::parse(&wire, &mut context).unwrap();
+            let mut children = element.children(&mut context).unwrap();
+            children.peek().unwrap().unwrap();
+            assert_eq!(
+                children.get_implicit::<Asn1Integer>([0x81]).unwrap(),
+                Asn1Integer::from(7)
+            );
+            assert_eq!(children.get::<Asn1Null>().unwrap(), Asn1Null);
+            children.end().unwrap();
+        }
+    }
+
+    #[test]
+    fn implicit_propagates_tag_structure_and_contents_errors() {
+        for (wire, expected) in [
+            (&[0x30, 0x00][..], Asn1Error::Truncated),
+            (&[0x30, 0x03, 0x82, 0x01, 0x07], Asn1Error::UnexpectedTag),
+            (&[0x30, 0x02, 0x81, 0x01], Asn1Error::Truncated),
+            (&[0x30, 0x02, 0x81, 0x00], Asn1Error::MalformedValue),
+        ] {
+            let mut context = ber();
+            let element = Asn1Ref::parse(wire, &mut context).unwrap();
+            let mut children = element.children(&mut context).unwrap();
+            assert_eq!(
+                children.get_implicit::<Asn1Integer>(&[0x81][..]),
+                Err(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn implicit_keeps_the_contexts_der_contents_rules() {
+        let wire = [0x30, 0x03, 0x81, 0x01, 0x01]; // BER TRUE, not DER FF
+        for (mut context, expected) in [
+            (ber(), Ok(Asn1Boolean::from(true))),
+            (der(), Err(Asn1Error::NotDer)),
+        ] {
+            let element = Asn1Ref::parse(&wire, &mut context).unwrap();
+            let mut children = element.children(&mut context).unwrap();
+            assert_eq!(children.get_implicit::<Asn1Boolean>([0x81]), expected);
+        }
+    }
+
+    #[test]
+    fn implicit_default_leaves_a_nonmatching_field_in_place() {
+        for wire in [&[0x30, 0x00][..], &[0x30, 0x02, 0x05, 0x00]] {
+            for mut context in [ber(), der()] {
+                let element = Asn1Ref::parse(wire, &mut context).unwrap();
+                let mut children = element.children(&mut context).unwrap();
+                assert_eq!(
+                    children.get_implicit_default(&[0x81][..], Asn1Boolean::from(false)),
+                    Ok(Asn1Boolean::from(false))
+                );
+                if wire.len() > 2 {
+                    assert_eq!(children.get::<Asn1Null>().unwrap(), Asn1Null);
+                }
+                children.end().unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn implicit_default_checks_written_values_under_ber_and_der() {
+        for (contents, ber_result, der_result) in [
+            (0x00, Ok(Asn1Boolean::from(false)), Err(Asn1Error::NotDer)),
+            (
+                0xFF,
+                Ok(Asn1Boolean::from(true)),
+                Ok(Asn1Boolean::from(true)),
+            ),
+            (0x01, Ok(Asn1Boolean::from(true)), Err(Asn1Error::NotDer)),
+        ] {
+            let wire = [0x30, 0x03, 0x81, 0x01, contents];
+            for (mut context, expected) in [(ber(), ber_result), (der(), der_result)] {
+                let element = Asn1Ref::parse(&wire, &mut context).unwrap();
+                let mut children = element.children(&mut context).unwrap();
+                assert_eq!(
+                    children.get_implicit_default([0x81], Asn1Boolean::from(false)),
+                    expected
+                );
+                children.end().unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn implicit_default_propagates_invalid_contents() {
+        for mut context in [ber(), der()] {
+            let element = Asn1Ref::parse(&[0x30, 0x02, 0x81, 0x00], &mut context).unwrap();
+            let mut children = element.children(&mut context).unwrap();
+            assert_eq!(
+                children.get_implicit_default([0x81], Asn1Boolean::from(false)),
+                Err(Asn1Error::MalformedValue)
+            );
+        }
+    }
+
+    #[test]
+    fn from_contents_reads_fields_and_restores_the_previous_depth() {
+        let mut context = ber();
+        let mut parent = context.enter().unwrap();
+        {
+            let mut fields =
+                Children::from_contents(&[0x02, 0x01, 0x01, 0x02, 0x01, 0x02], parent.context())
+                    .unwrap();
+            assert_eq!(fields.context().depth(), 2);
+            assert_eq!(fields.get::<Asn1Integer>().unwrap(), Asn1Integer::from(1));
+            assert_eq!(fields.get::<Asn1Integer>().unwrap(), Asn1Integer::from(2));
+            fields.end().unwrap();
+        }
+        assert_eq!(parent.context().depth(), 1);
+    }
+
+    #[test]
+    fn from_contents_rejects_entering_past_the_depth_limit() {
+        let mut context = DecodingContext::new(DecodingOptions::new(1, 1024, 16));
+        let mut parent = context.enter().unwrap();
+        assert!(matches!(
+            Children::from_contents(&[], parent.context()),
+            Err(Asn1Error::DepthExceeded)
+        ));
+        assert_eq!(parent.context().depth(), 1);
+    }
+
+    #[test]
+    fn from_contents_enforces_the_child_count_limit() {
+        let mut context = DecodingContext::new(DecodingOptions::new(32, 1024, 2));
+        {
+            let mut fields = Children::from_contents(
+                &[0x02, 0x01, 0x01, 0x02, 0x01, 0x02, 0x02, 0x01, 0x03],
+                &mut context,
+            )
+            .unwrap();
+            assert_eq!(
+                fields.collect_all::<Asn1Integer>(),
+                Err(Asn1Error::ChildrenExceeded)
+            );
+        }
+        assert_eq!(context.depth(), 0);
+    }
+
+    #[test]
+    fn from_contents_keeps_der_header_checks() {
+        let mut context = der();
+        let mut fields = Children::from_contents(&[0x02, 0x81, 0x01, 0x01], &mut context).unwrap();
+        assert_eq!(fields.get::<Asn1Integer>(), Err(Asn1Error::NotDer));
+    }
+
+    #[test]
+    fn implicit_containers_decode_their_contents() {
+        let wire = [0x30, 0x08, 0xA1, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x02];
+        let expected = [Asn1Integer::from(1), Asn1Integer::from(2)];
+        for mut context in [ber(), der()] {
+            let element = Asn1Ref::parse(&wire, &mut context).unwrap();
+            let mut fields = element.children(&mut context).unwrap();
+            let sequence = fields
+                .get_implicit::<Asn1SequenceOf<Asn1Integer>>([0xA1])
+                .unwrap();
+            assert_eq!(sequence.elements(), expected);
+            fields.end().unwrap();
+
+            let mut fields = element.children(&mut context).unwrap();
+            let set = fields
+                .get_implicit_opt::<Asn1SetOf<Asn1Integer>>([0xA1])
+                .unwrap()
+                .unwrap();
+            assert_eq!(set.members(), expected);
+            fields.end().unwrap();
+            assert_eq!(context.depth(), 0);
+        }
     }
 
     #[test]
