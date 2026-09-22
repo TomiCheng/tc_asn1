@@ -2,7 +2,7 @@
 
 All notable changes to `tc_asn1` are documented in this file.
 
-## 0.1.1 - Unreleased
+## 0.1.1 - 2026-09-22
 
 ### Added
 
