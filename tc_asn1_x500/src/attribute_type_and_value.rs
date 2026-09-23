@@ -163,6 +163,8 @@ pub struct AttributeTypeAndValue {
 }
 
 impl AttributeTypeAndValue {
+    /// Pairs a type OID with a value; the value is not checked against the
+    /// syntax the type declares.
     pub fn new(attribute_type: Asn1Oid, value: impl Into<AttributeValue>) -> Self {
         Self {
             attribute_type,
@@ -170,10 +172,12 @@ impl AttributeTypeAndValue {
         }
     }
 
+    /// The attribute type OID.
     pub fn attribute_type(&self) -> &Asn1Oid {
         &self.attribute_type
     }
 
+    /// The value.
     pub fn value(&self) -> &AttributeValue {
         &self.value
     }

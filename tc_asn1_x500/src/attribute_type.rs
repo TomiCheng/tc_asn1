@@ -31,41 +31,64 @@ use tc_asn1::{Asn1Oid, NamedOid};
 pub struct AttributeType;
 
 impl AttributeType {
+    /// X.520 commonName.
     pub const COMMON_NAME: NamedOid = NamedOid::new(&[0x55, 0x04, 0x03], "2.5.4.3", "CN");
+    /// X.520 surname; `SN` is this, not serialNumber.
     pub const SURNAME: NamedOid = NamedOid::new(&[0x55, 0x04, 0x04], "2.5.4.4", "SN");
+    /// X.520 serialNumber; a PrintableString.
     pub const SERIAL_NUMBER: NamedOid =
         NamedOid::new(&[0x55, 0x04, 0x05], "2.5.4.5", "serialNumber");
+    /// X.520 countryName; a two-letter PrintableString.
     pub const COUNTRY_NAME: NamedOid = NamedOid::new(&[0x55, 0x04, 0x06], "2.5.4.6", "C");
+    /// X.520 localityName.
     pub const LOCALITY_NAME: NamedOid = NamedOid::new(&[0x55, 0x04, 0x07], "2.5.4.7", "L");
+    /// X.520 stateOrProvinceName.
     pub const STATE_OR_PROVINCE_NAME: NamedOid =
         NamedOid::new(&[0x55, 0x04, 0x08], "2.5.4.8", "ST");
+    /// X.520 streetAddress.
     pub const STREET_ADDRESS: NamedOid = NamedOid::new(&[0x55, 0x04, 0x09], "2.5.4.9", "STREET");
+    /// X.520 organizationName.
     pub const ORGANIZATION_NAME: NamedOid = NamedOid::new(&[0x55, 0x04, 0x0a], "2.5.4.10", "O");
+    /// X.520 organizationalUnitName.
     pub const ORGANIZATIONAL_UNIT_NAME: NamedOid =
         NamedOid::new(&[0x55, 0x04, 0x0b], "2.5.4.11", "OU");
+    /// X.520 title.
     pub const TITLE: NamedOid = NamedOid::new(&[0x55, 0x04, 0x0c], "2.5.4.12", "title");
+    /// X.520 description.
     pub const DESCRIPTION: NamedOid = NamedOid::new(&[0x55, 0x04, 0x0d], "2.5.4.13", "description");
+    /// X.520 businessCategory.
     pub const BUSINESS_CATEGORY: NamedOid =
         NamedOid::new(&[0x55, 0x04, 0x0f], "2.5.4.15", "businessCategory");
     /// A SEQUENCE OF DirectoryString, not a single string.
     pub const POSTAL_ADDRESS: NamedOid =
         NamedOid::new(&[0x55, 0x04, 0x10], "2.5.4.16", "postalAddress");
+    /// X.520 postalCode.
     pub const POSTAL_CODE: NamedOid = NamedOid::new(&[0x55, 0x04, 0x11], "2.5.4.17", "postalCode");
+    /// X.520 telephoneNumber; a PrintableString.
     pub const TELEPHONE_NUMBER: NamedOid =
         NamedOid::new(&[0x55, 0x04, 0x14], "2.5.4.20", "telephoneNumber");
+    /// X.520 name.
     pub const NAME: NamedOid = NamedOid::new(&[0x55, 0x04, 0x29], "2.5.4.41", "name");
+    /// X.520 givenName.
     pub const GIVEN_NAME: NamedOid = NamedOid::new(&[0x55, 0x04, 0x2a], "2.5.4.42", "givenName");
+    /// X.520 initials.
     pub const INITIALS: NamedOid = NamedOid::new(&[0x55, 0x04, 0x2b], "2.5.4.43", "initials");
+    /// X.520 generationQualifier.
     pub const GENERATION_QUALIFIER: NamedOid =
         NamedOid::new(&[0x55, 0x04, 0x2c], "2.5.4.44", "generationQualifier");
     /// A BIT STRING.
     pub const X500_UNIQUE_IDENTIFIER: NamedOid =
         NamedOid::new(&[0x55, 0x04, 0x2d], "2.5.4.45", "x500UniqueIdentifier");
+    /// X.520 dnQualifier; a PrintableString.
     pub const DN_QUALIFIER: NamedOid =
         NamedOid::new(&[0x55, 0x04, 0x2e], "2.5.4.46", "dnQualifier");
+    /// X.520 dmdName.
     pub const DMD_NAME: NamedOid = NamedOid::new(&[0x55, 0x04, 0x36], "2.5.4.54", "dmdName");
+    /// X.520 pseudonym.
     pub const PSEUDONYM: NamedOid = NamedOid::new(&[0x55, 0x04, 0x41], "2.5.4.65", "pseudonym");
+    /// X.520 role.
     pub const ROLE: NamedOid = NamedOid::new(&[0x55, 0x04, 0x48], "2.5.4.72", "role");
+    /// X.520 organizationIdentifier.
     pub const ORGANIZATION_IDENTIFIER: NamedOid =
         NamedOid::new(&[0x55, 0x04, 0x61], "2.5.4.97", "organizationIdentifier");
     /// RFC 3739 personal data; a GeneralizedTime.

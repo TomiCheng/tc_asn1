@@ -31,11 +31,15 @@ use crate::string_prep::text_equivalent;
 /// when built with [`new`](Self::new); may be empty when decoded.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum DirectoryString {
+    /// What [`new`](Self::new) picks when every character allows it.
     PrintableString(Asn1PrintableString),
+    /// What [`new`](Self::new) picks otherwise.
     Utf8String(Asn1Utf8String),
     /// Raw contents under tag 20; the character set is not interpreted.
     TeletexString(Asn1Any),
+    /// Found in older certificates.
     BmpString(Asn1BmpString),
+    /// Found in older certificates.
     UniversalString(Asn1UniversalString),
 }
 

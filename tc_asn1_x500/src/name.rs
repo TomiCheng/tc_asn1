@@ -90,6 +90,7 @@ impl Name {
         self.rdns.elements()
     }
 
+    /// Whether there are no RDNs, as in an empty subject.
     pub fn is_empty(&self) -> bool {
         self.rdns.elements().is_empty()
     }

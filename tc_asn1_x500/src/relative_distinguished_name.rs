@@ -69,6 +69,7 @@ impl RelativeDistinguishedName {
         self.attributes.members()
     }
 
+    /// Whether there is more than one attribute, as in `CN=Alice+UID=alice`.
     pub fn is_multi_valued(&self) -> bool {
         self.attributes.members().len() > 1
     }
