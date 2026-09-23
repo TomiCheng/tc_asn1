@@ -1,5 +1,11 @@
 # tc_asn1_x500
 
+[![crates.io](https://img.shields.io/crates/v/tc_asn1_x500.svg)](https://crates.io/crates/tc_asn1_x500)
+[![docs.rs](https://docs.rs/tc_asn1_x500/badge.svg)](https://docs.rs/tc_asn1_x500)
+[![CI](https://github.com/TomiCheng/tc_asn1/actions/workflows/ci.yml/badge.svg)](https://github.com/TomiCheng/tc_asn1/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](#license)
+![rustc](https://img.shields.io/badge/rustc-1.85+-blue.svg)
+
 X.500 distinguished names, as used for the subject and issuer of X.509
 certificates: `Name` and its parts, the X.520 `DirectoryString`, and the
 attribute types that appear in names.
@@ -44,3 +50,8 @@ assert!(decoded.equivalent(&"cn=alice, o=EXAMPLE, c=TW".parse()?));
 - `equivalent` applies RFC 4518 string preparation except the steps that
   need Unicode tables, NFKC normalization and full case folding: a
   precomposed and a decomposed accent, or `ß` and `ss`, still differ.
+
+## License
+
+Licensed under either the [MIT license](LICENSE-MIT) or the
+[Apache License, Version 2.0](LICENSE-APACHE), at your option.
