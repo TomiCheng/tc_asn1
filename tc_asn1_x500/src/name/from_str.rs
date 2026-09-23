@@ -225,7 +225,7 @@ fn hex_pair(text: &str) -> Option<u8> {
 }
 
 fn decode_hex(text: &str) -> Result<Vec<u8>, Asn1Error> {
-    if text.is_empty() || !text.len().is_multiple_of(2) {
+    if text.is_empty() || text.len() % 2 != 0 {
         return Err(Asn1Error::MalformedValue);
     }
     (0..text.len())
