@@ -1,0 +1,10 @@
+[package]
+name = "tc_asn1_x500"
+description = "X.500 directory structures (X.501 names, X.520 attribute types) on top of tc_asn1."
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+tc_asn1 = { version = "0.1.1", path = "../tc_asn1" }
