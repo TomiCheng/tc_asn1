@@ -5,3 +5,10 @@ version = 4
 [[package]]
 name = "tc_asn1"
 version = "0.1.1"
+
+[[package]]
+name = "tc_asn1_x500"
+version = "0.1.0"
+dependencies = [
+ "tc_asn1",
+]

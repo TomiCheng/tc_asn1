@@ -1,0 +1,16 @@
+[package]
+name = "tc_asn1_x500"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "X.500 directory structures (X.501 names, X.520 attribute types) on top of tc_asn1."
+readme = "README.md"
+documentation = "https://docs.rs/tc_asn1_x500"
+keywords = ["x500", "x509", "asn1", "distinguished-name", "no-std"]
+categories = ["encoding", "parser-implementations", "no-std"]
+include = ["src/**", "tests/**", "README.md", "CHANGELOG.md", "LICENSE-MIT", "LICENSE-APACHE"]
+
+[dependencies]
+tc_asn1 = { version = "0.1.1", path = "../tc_asn1" }

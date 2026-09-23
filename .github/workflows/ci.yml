@@ -98,10 +98,12 @@ jobs:
           key: build-only
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo doc --locked --no-deps
-      - run: cargo package --locked -p tc_asn1
+      # Packaged together so tc_asn1_x500 is verified against this tc_asn1,
+      # not the release on crates.io.
+      - run: cargo package --locked -p tc_asn1 -p tc_asn1_x500
         env:
           # Keep unpacked package manifests outside rust-cache's build tree.
-          CARGO_TARGET_DIR: ${{ runner.temp }}/tc-asn1-package
+          CARGO_TARGET_DIR: ${{ runner.temp }}/package
 
   portable:
     name: Cross-architecture contracts
@@ -119,3 +121,10 @@ jobs:
         run: |
           test "$(cargo tree --locked -p tc_asn1 --target aarch64-unknown-none --edges normal --prefix none | wc -l)" -eq 1
           test "$(cargo tree --locked -p tc_asn1 --target wasm32-unknown-unknown --edges normal --prefix none | wc -l)" -eq 1
+      - name: Check tc_asn1_x500 depends only on tc_asn1
+        run: |
+          for target in aarch64-unknown-none wasm32-unknown-unknown; do
+            tree="$(cargo tree --locked -p tc_asn1_x500 --target "$target" --edges normal --prefix none)"
+            test "$(printf '%s\n' "$tree" | wc -l)" -eq 2
+            printf '%s\n' "$tree" | grep -qE '^tc_asn1 v'
+          done
