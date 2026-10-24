@@ -53,7 +53,7 @@ jobs:
         with:
           key: ${{ matrix.name }}
       - run: cargo test --locked
-      - run: cargo test --locked -p tc_asn1 --features zeroize
+      - run: cargo test --locked -p tc_asn1 --all-features
 
   x86:
     name: Native execution / Linux i686
@@ -82,7 +82,7 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: 1.85.0
       - run: cargo +1.85.0 test --locked
-      - run: cargo +1.85.0 test --locked -p tc_asn1 --features zeroize
+      - run: cargo +1.85.0 test --locked -p tc_asn1 --all-features
 
   quality:
     name: Format, Clippy, docs and package
@@ -121,8 +121,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --locked --target wasm32-unknown-unknown
       - run: cargo check --locked --target aarch64-unknown-none
-      - run: cargo check --locked -p tc_asn1 --features zeroize --target wasm32-unknown-unknown
-      - run: cargo check --locked -p tc_asn1 --features zeroize --target aarch64-unknown-none
+      - run: cargo check --locked -p tc_asn1 --all-features --target wasm32-unknown-unknown
+      - run: cargo check --locked -p tc_asn1 --all-features --target aarch64-unknown-none
       - name: Check dependency-free build
         run: |
           test "$(cargo tree --locked -p tc_asn1 --target aarch64-unknown-none --edges normal --prefix none | wc -l)" -eq 1
@@ -133,6 +133,14 @@ jobs:
             tree="$(cargo tree --locked -p tc_asn1 --features zeroize --target "$target" --edges normal --prefix none)"
             test "$(printf '%s\n' "$tree" | wc -l)" -eq 2
             printf '%s\n' "$tree" | grep -qE '^tc_zeroize v'
+          done
+      - name: Check the chrono feature adds only chrono and num-traits
+        run: |
+          for target in aarch64-unknown-none wasm32-unknown-unknown; do
+            tree="$(cargo tree --locked -p tc_asn1 --features chrono --target "$target" --edges normal --prefix none)"
+            test "$(printf '%s\n' "$tree" | wc -l)" -eq 3
+            printf '%s\n' "$tree" | grep -qE '^chrono v'
+            printf '%s\n' "$tree" | grep -qE '^num-traits v'
           done
       - name: Check tc_asn1_x500 depends only on tc_asn1
         run: |

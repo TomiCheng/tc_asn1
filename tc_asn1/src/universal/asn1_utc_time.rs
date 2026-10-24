@@ -179,6 +179,41 @@ impl tc_zeroize::Zeroize for Asn1UtcTime {
     }
 }
 
+#[cfg(feature = "chrono")]
+impl From<Asn1UtcTime> for chrono::DateTime<chrono::Utc> {
+    /// The same instant. Variable time: branches on the fields, which are
+    /// public.
+    fn from(value: Asn1UtcTime) -> Self {
+        value.0.to_chrono()
+    }
+}
+
+#[cfg(feature = "chrono")]
+impl TryFrom<chrono::DateTime<chrono::Utc>> for Asn1UtcTime {
+    type Error = Asn1Error;
+
+    /// Truncates to the second, the precision the type carries; a leap
+    /// second becomes `:59`. A year outside 1950-2049 is `MalformedValue`.
+    /// Variable time: branches on the fields, which are public.
+    ///
+    /// ```
+    /// use chrono::{DateTime, TimeZone, Utc};
+    /// use tc_asn1::{Asn1Error, Asn1UtcTime};
+    ///
+    /// let instant = Utc.with_ymd_and_hms(2026, 10, 21, 8, 0, 0).unwrap();
+    /// let time = Asn1UtcTime::try_from(instant)?;
+    /// assert_eq!(DateTime::<Utc>::from(time), instant);
+    ///
+    /// let outside = Utc.with_ymd_and_hms(2050, 1, 1, 0, 0, 0).unwrap();
+    /// assert_eq!(Asn1UtcTime::try_from(outside), Err(Asn1Error::MalformedValue));
+    /// # Ok::<(), Asn1Error>(())
+    /// ```
+    fn try_from(value: chrono::DateTime<chrono::Utc>) -> Result<Self, Asn1Error> {
+        let (year, month, day, hour, minute, second) = DateTime::fields_of(&value)?;
+        Self::new(year, month, day, hour, minute, second)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::string::ToString;

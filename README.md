@@ -14,7 +14,7 @@ commands.
 
 | Crate | Version | Description |
 | --- | --- | --- |
-| [`tc_asn1`](tc_asn1) | [![crates.io](https://img.shields.io/crates/v/tc_asn1.svg)](https://crates.io/crates/tc_asn1) [![docs.rs](https://docs.rs/tc_asn1/badge.svg)](https://docs.rs/tc_asn1) | BER, CER and DER codecs for the ASN.1 universal types, and the traits through which a schema's structures become Rust types with the same encoding and decoding as the built-in ones. Any BER can also be decoded into a tree without a schema. `no_std` + `alloc`, no macros, no I/O, and no dependencies unless the optional `zeroize` feature is on. |
+| [`tc_asn1`](tc_asn1) | [![crates.io](https://img.shields.io/crates/v/tc_asn1.svg)](https://crates.io/crates/tc_asn1) [![docs.rs](https://docs.rs/tc_asn1/badge.svg)](https://docs.rs/tc_asn1) | BER, CER and DER codecs for the ASN.1 universal types, and the traits through which a schema's structures become Rust types with the same encoding and decoding as the built-in ones. Any BER can also be decoded into a tree without a schema. `no_std` + `alloc`, no macros, no I/O, and no dependencies unless an optional feature is on. |
 | [`tc_asn1_x500`](tc_asn1_x500) | [![crates.io](https://img.shields.io/crates/v/tc_asn1_x500.svg)](https://crates.io/crates/tc_asn1_x500) [![docs.rs](https://docs.rs/tc_asn1_x500/badge.svg)](https://docs.rs/tc_asn1_x500) | X.500 distinguished names as used for the subject and issuer of X.509 certificates: `Name`, its relative distinguished names and attribute type-and-value pairs, the X.520 `DirectoryString`, and constants for the attribute types found in names. Converts to and from RFC 4514 text and compares strictly or with the matching of RFC 5280 §7.1. `no_std` + `alloc`, depends only on `tc_asn1`. |
 
 `tc_asn1` knows the X.690 rules and nothing of any protocol; the OIDs,
@@ -25,8 +25,9 @@ depends on nothing but `tc_asn1`.
 
 Rust 1.85 or later, edition 2024. Every crate builds without `std` and
 reaches the heap only through the sysroot `alloc` crate. `tc_asn1` has no
-dependencies by default; its one feature, `zeroize`, adds `tc_zeroize` to
-erase secret octets. `tc_asn1_x500` has no features and depends only on
+dependencies by default; its optional features add one each: `zeroize` adds
+`tc_zeroize` to erase secret octets, `chrono` adds `chrono` for converting
+UTCTime and GeneralizedTime. `tc_asn1_x500` has no features and depends only on
 `tc_asn1`.
 
 ## Workspace checks

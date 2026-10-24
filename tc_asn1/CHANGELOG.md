@@ -19,11 +19,16 @@ All notable changes to `tc_asn1` are documented in this file.
   identifiers their shortest value, times the earliest value of their type,
   and `Asn1Any` keeps its tag with empty contents. No type erases itself on
   drop; that policy belongs to the container that knows it holds a secret.
+- An optional `chrono` feature, off by default, converting `Asn1UtcTime`
+  and `Asn1GeneralizedTime` to `chrono::DateTime<Utc>` with `From`, and
+  back with `TryFrom`, which truncates to the second, turns a leap second
+  into `:59`, and returns `MalformedValue` for a year outside the type's
+  range.
 
 ### Compatibility
 
-- Additive. The feature is off by default; every 0.1.x program compiles and
-  behaves the same, and the default build still has no dependencies.
+- Additive. Both features are off by default; every 0.1.x program compiles
+  and behaves the same, and the default build still has no dependencies.
 
 ## 0.1.1 - 2026-09-22
 

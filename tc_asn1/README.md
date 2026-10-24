@@ -21,8 +21,8 @@ have not written yet: decode any BER into a tree and dump it, or walk the
 elements one level at a time.
 
 The crate is `no_std` + `alloc`, has no macros and no I/O, has no
-dependencies unless the optional `zeroize` feature is on, and knows nothing
-of any protocol.
+dependencies unless an optional feature is on, and knows nothing of any
+protocol.
 
 ## Usage
 
@@ -283,6 +283,11 @@ A zeroized value stays valid and still encodes: integers, enumerations and
 REAL become zero, strings and containers empty, identifiers their shortest
 value, times the earliest value of their type, and an `Asn1Any` keeps its tag
 with empty contents.
+
+`chrono` (off by default) converts `Asn1UtcTime` and `Asn1GeneralizedTime`
+to and from `chrono::DateTime<Utc>`. Going to chrono is exact; coming from it
+truncates to the second, turns a leap second into `:59`, and rejects a year
+outside the type's range.
 
 ## License
 

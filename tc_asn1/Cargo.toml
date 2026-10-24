@@ -16,9 +16,12 @@ include = ["src/**", "tests/**", "README.md", "CHANGELOG.md", "LICENSE-MIT", "LI
 default = []
 # Zeroize for every type that owns data; off by default, so the crate keeps no dependencies.
 zeroize = ["dep:tc_zeroize"]
+# Conversions between UTCTime/GeneralizedTime and chrono's DateTime<Utc>.
+chrono = ["dep:chrono"]
 
 [dependencies]
 tc_zeroize = { version = "0.1.0", default-features = false, features = ["alloc"], optional = true }
+chrono = { version = "0.4.38", default-features = false, optional = true }
 
 [package.metadata.docs.rs]
 all-features = true
