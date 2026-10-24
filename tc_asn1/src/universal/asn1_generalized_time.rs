@@ -163,6 +163,15 @@ impl Encode for Asn1GeneralizedTime {
     }
 }
 
+#[cfg(feature = "zeroize")]
+impl tc_zeroize::Zeroize for Asn1GeneralizedTime {
+    /// Wipes the fields and leaves 0000-01-01 00:00:00 UTC, the earliest
+    /// GeneralizedTime. Constant time.
+    fn zeroize(&mut self) {
+        self.0.wipe(0);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::string::ToString;

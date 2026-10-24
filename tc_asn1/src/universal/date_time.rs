@@ -116,3 +116,21 @@ impl fmt::Display for DateTime {
         )
     }
 }
+
+#[cfg(feature = "zeroize")]
+impl DateTime {
+    /// Wipes every field, then leaves midnight on January 1 of `year`, the
+    /// first instant the owning type allows. Constant time.
+    pub(crate) fn wipe(&mut self, year: u16) {
+        use tc_zeroize::Zeroize;
+        self.year.zeroize();
+        self.month.zeroize();
+        self.day.zeroize();
+        self.hour.zeroize();
+        self.minute.zeroize();
+        self.second.zeroize();
+        self.year = year;
+        self.month = 1;
+        self.day = 1;
+    }
+}

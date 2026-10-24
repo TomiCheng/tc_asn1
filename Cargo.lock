@@ -5,6 +5,9 @@ version = 4
 [[package]]
 name = "tc_asn1"
 version = "0.1.1"
+dependencies = [
+ "tc_zeroize",
+]
 
 [[package]]
 name = "tc_asn1_x500"
@@ -12,3 +15,9 @@ version = "0.1.0"
 dependencies = [
  "tc_asn1",
 ]
+
+[[package]]
+name = "tc_zeroize"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f496e361f9d75bd7cd0408dc585e9f334182314595ce27ea4852ab9c3858af1"

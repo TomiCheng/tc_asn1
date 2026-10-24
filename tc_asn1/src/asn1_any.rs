@@ -161,6 +161,22 @@ impl Encode for Asn1Any {
     }
 }
 
+#[cfg(feature = "zeroize")]
+impl tc_zeroize::Zeroize for Asn1Any {
+    /// Wipes the length, contents and end-of-contents octets, keeping the
+    /// identifier, and leaves the same tag with empty contents.
+    /// Constant time with respect to the contents: the work depends only on
+    /// the capacity.
+    fn zeroize(&mut self) {
+        let tag_len = self.length_offset;
+        self.raw.truncate(tag_len);
+        self.raw.spare_capacity_mut().zeroize();
+        self.raw.push(0);
+        self.value_offset = tag_len + 1;
+        self.eoc_offset = tag_len + 1;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Asn1Any;

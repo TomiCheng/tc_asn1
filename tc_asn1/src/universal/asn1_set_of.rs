@@ -174,6 +174,16 @@ impl<T: Encode> Encode for Asn1SetOf<T> {
     }
 }
 
+#[cfg(feature = "zeroize")]
+impl<T: tc_zeroize::Zeroize> tc_zeroize::Zeroize for Asn1SetOf<T> {
+    /// Wipes every member and leaves the set empty.
+    /// Constant time with respect to the contents: the work depends only on
+    /// the capacity.
+    fn zeroize(&mut self) {
+        tc_zeroize::Zeroize::zeroize(&mut self.members);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::vec;

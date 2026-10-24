@@ -170,6 +170,15 @@ impl Encode for Asn1UtcTime {
     }
 }
 
+#[cfg(feature = "zeroize")]
+impl tc_zeroize::Zeroize for Asn1UtcTime {
+    /// Wipes the fields and leaves 1950-01-01 00:00:00 UTC, the earliest
+    /// UTCTime. Constant time.
+    fn zeroize(&mut self) {
+        self.0.wipe(1950);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::string::ToString;

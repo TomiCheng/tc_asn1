@@ -196,6 +196,17 @@ impl Encode for Asn1BitString {
     }
 }
 
+#[cfg(feature = "zeroize")]
+impl tc_zeroize::Zeroize for Asn1BitString {
+    /// Wipes the octets and the unused-bit count and leaves the string empty.
+    /// Constant time with respect to the contents: the work depends only on
+    /// the capacity.
+    fn zeroize(&mut self) {
+        tc_zeroize::Zeroize::zeroize(&mut self.bytes);
+        tc_zeroize::Zeroize::zeroize(&mut self.unused_bits);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::vec;

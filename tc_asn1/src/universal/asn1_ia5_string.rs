@@ -140,6 +140,16 @@ impl Encode for Asn1Ia5String {
     }
 }
 
+#[cfg(feature = "zeroize")]
+impl tc_zeroize::Zeroize for Asn1Ia5String {
+    /// Wipes the text and leaves the string empty.
+    /// Constant time with respect to the contents: the work depends only on
+    /// the capacity.
+    fn zeroize(&mut self) {
+        crate::wipe::wipe_string(&mut self.text);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::string::{String, ToString};

@@ -2,6 +2,29 @@
 
 All notable changes to `tc_asn1` are documented in this file.
 
+## 0.1.2 - Unreleased
+
+### Added
+
+- An optional `zeroize` feature, off by default, implementing
+  `tc_zeroize::Zeroize` for every type that owns data: `Asn1Integer`,
+  `Asn1Enumerated`, `Asn1OctetString`, `Asn1BitString`, `Asn1Boolean`,
+  `Asn1Null`, `Asn1Oid`, `Asn1RelativeOid`, `Asn1Real`, the string types,
+  the time types, `Asn1OidIri`, `Asn1RelativeOidIri` and `Asn1Any`, and
+  `Asn1SequenceOf<T>`, `Asn1SetOf<T>`, `Asn1Constructed<T>` and
+  `Asn1Object` when their elements are `Zeroize`. A key container can now
+  erase the secret octets it decoded from its own `Drop`.
+- A zeroized value remains a valid value of its type: integers,
+  enumerations and REAL become zero, strings and containers empty,
+  identifiers their shortest value, times the earliest value of their type,
+  and `Asn1Any` keeps its tag with empty contents. No type erases itself on
+  drop; that policy belongs to the container that knows it holds a secret.
+
+### Compatibility
+
+- Additive. The feature is off by default; every 0.1.x program compiles and
+  behaves the same, and the default build still has no dependencies.
+
 ## 0.1.1 - 2026-09-22
 
 ### Added

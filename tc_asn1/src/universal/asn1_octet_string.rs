@@ -131,6 +131,16 @@ impl Encode for Asn1OctetString {
     }
 }
 
+#[cfg(feature = "zeroize")]
+impl tc_zeroize::Zeroize for Asn1OctetString {
+    /// Wipes the octets and leaves the string empty.
+    /// Constant time with respect to the contents: the work depends only on
+    /// the capacity.
+    fn zeroize(&mut self) {
+        tc_zeroize::Zeroize::zeroize(&mut self.bytes);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::vec;
