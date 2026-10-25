@@ -145,6 +145,16 @@ macro_rules! iri {
                 self.encode_tagged(Self::TAG, rules, out)
             }
         }
+
+        #[cfg(feature = "zeroize")]
+        impl tc_zeroize::Zeroize for $name {
+            /// Wipes the path and leaves the single arc `0`. Constant time with
+            /// respect to the contents: the work depends only on the capacity.
+            fn zeroize(&mut self) {
+                crate::wipe::wipe_string(&mut self.text);
+                self.text.push_str(if $absolute { "/0" } else { "0" });
+            }
+        }
     };
 }
 

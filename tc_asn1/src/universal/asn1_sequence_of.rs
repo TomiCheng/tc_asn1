@@ -123,6 +123,16 @@ impl<T: Encode> Encode for Asn1SequenceOf<T> {
     }
 }
 
+#[cfg(feature = "zeroize")]
+impl<T: tc_zeroize::Zeroize> tc_zeroize::Zeroize for Asn1SequenceOf<T> {
+    /// Wipes every element and leaves the sequence empty.
+    /// Constant time with respect to the contents: the work depends only on
+    /// the capacity.
+    fn zeroize(&mut self) {
+        tc_zeroize::Zeroize::zeroize(&mut self.elements);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::vec;

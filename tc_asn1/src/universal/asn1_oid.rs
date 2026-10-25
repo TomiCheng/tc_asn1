@@ -327,6 +327,16 @@ impl Encode for Asn1Oid {
     }
 }
 
+#[cfg(feature = "zeroize")]
+impl tc_zeroize::Zeroize for Asn1Oid {
+    /// Wipes the octets and leaves `0.0`, the shortest valid OBJECT IDENTIFIER.
+    /// Constant time with respect to the contents: the work depends only on
+    /// the capacity.
+    fn zeroize(&mut self) {
+        crate::wipe::wipe_leaving(&mut self.bytes, &[0]);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::string::ToString;

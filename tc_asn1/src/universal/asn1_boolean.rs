@@ -125,6 +125,16 @@ impl Encode for Asn1Boolean {
     }
 }
 
+#[cfg(feature = "zeroize")]
+impl tc_zeroize::Zeroize for Asn1Boolean {
+    /// Overwrites the value with FALSE.
+    /// Constant time with respect to the contents: the work depends only on
+    /// the capacity.
+    fn zeroize(&mut self) {
+        tc_zeroize::Zeroize::zeroize(&mut self.0);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::string::ToString;

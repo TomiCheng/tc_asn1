@@ -116,3 +116,64 @@ impl fmt::Display for DateTime {
         )
     }
 }
+
+#[cfg(feature = "zeroize")]
+impl DateTime {
+    /// Wipes every field, then leaves midnight on January 1 of `year`, the
+    /// first instant the owning type allows. Constant time.
+    pub(crate) fn wipe(&mut self, year: u16) {
+        use tc_zeroize::Zeroize;
+        self.year.zeroize();
+        self.month.zeroize();
+        self.day.zeroize();
+        self.hour.zeroize();
+        self.minute.zeroize();
+        self.second.zeroize();
+        self.year = year;
+        self.month = 1;
+        self.day = 1;
+    }
+}
+
+#[cfg(feature = "chrono")]
+impl DateTime {
+    /// The same instant in chrono. Variable time: branches on the fields,
+    /// which are public.
+    pub(crate) fn to_chrono(self) -> chrono::DateTime<chrono::Utc> {
+        chrono::NaiveDate::from_ymd_opt(
+            i32::from(self.year),
+            u32::from(self.month),
+            u32::from(self.day),
+        )
+        .and_then(|date| {
+            date.and_hms_opt(
+                u32::from(self.hour),
+                u32::from(self.minute),
+                u32::from(self.second),
+            )
+        })
+        .expect("a checked DateTime is a valid chrono date and time")
+        .and_utc()
+    }
+
+    /// The fields of a chrono instant, truncated to the second, for the
+    /// owning type's `new` to check: chrono keeps a leap second as second 59
+    /// with an extra nanosecond count, so it becomes `:59`. A year chrono can
+    /// hold but `u16` cannot is `MalformedValue`. Variable time: branches on
+    /// the fields, which are public.
+    pub(crate) fn fields_of(
+        value: &chrono::DateTime<chrono::Utc>,
+    ) -> Result<(u16, u8, u8, u8, u8, u8), Asn1Error> {
+        use chrono::{Datelike, Timelike};
+        let year = u16::try_from(value.year()).map_err(|_| Asn1Error::MalformedValue)?;
+        // chrono keeps the remaining fields within 1-12, 1-31, 0-23 and 0-59.
+        Ok((
+            year,
+            value.month() as u8,
+            value.day() as u8,
+            value.hour() as u8,
+            value.minute() as u8,
+            value.second() as u8,
+        ))
+    }
+}

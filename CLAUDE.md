@@ -18,8 +18,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 The crate list and workspace-wide checks live in the root
 [README.md](README.md); read it rather than restating it here. Every crate is
-`no_std` + `alloc` with no feature flags. `tc_asn1` has no dependencies at all,
-and `tc_asn1_x500` depends on `tc_asn1` alone — CI enforces both with
+`no_std` + `alloc`. `tc_asn1` has two optional features, off by default and
+each adding one dependency (`zeroize` adds `tc_zeroize`, `chrono` adds `chrono`),
+and no dependencies without them;
+`tc_asn1_x500` has no features and depends on `tc_asn1` alone — CI enforces both with
 `cargo tree` on the `wasm32-unknown-unknown` and `aarch64-unknown-none`
 targets. The codec carries no protocol knowledge: OIDs, attribute types,
 extensions and profiles belong to the crates built on it, such as

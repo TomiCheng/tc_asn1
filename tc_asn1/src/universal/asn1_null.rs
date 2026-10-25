@@ -90,6 +90,14 @@ impl Encode for Asn1Null {
     }
 }
 
+#[cfg(feature = "zeroize")]
+impl tc_zeroize::Zeroize for Asn1Null {
+    /// Nothing to erase: a NULL has no contents.
+    /// Constant time with respect to the contents: the work depends only on
+    /// the capacity.
+    fn zeroize(&mut self) {}
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::string::ToString;

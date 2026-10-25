@@ -20,8 +20,9 @@ The second use is looking at an encoding whose schema you do not have, or
 have not written yet: decode any BER into a tree and dump it, or walk the
 elements one level at a time.
 
-The crate is `no_std` + `alloc`, has no dependencies, no macros and no I/O,
-and knows nothing of any protocol.
+The crate is `no_std` + `alloc`, has no macros and no I/O, has no
+dependencies unless an optional feature is on, and knows nothing of any
+protocol.
 
 ## Usage
 
@@ -269,6 +270,24 @@ constructed form of the string types, for which `Asn1Constructed` with the
 `CONSTRUCTED_*` tag serves. UTCTime and GeneralizedTime accept the RFC 5280
 forms only, so a UTC offset, omitted seconds or fractional seconds are
 rejected even under BER.
+
+## Features
+
+`zeroize` (off by default) implements `tc_zeroize::Zeroize` for every type
+that owns data, so a structure holding a private key can erase the octets it
+decoded. It is a capability, not a policy: no type here wipes itself on
+drop, since none knows whether it holds a secret. The key container that
+does know calls `zeroize` on its fields from its own `Drop`.
+
+A zeroized value stays valid and still encodes: integers, enumerations and
+REAL become zero, strings and containers empty, identifiers their shortest
+value, times the earliest value of their type, and an `Asn1Any` keeps its tag
+with empty contents.
+
+`chrono` (off by default) converts `Asn1UtcTime` and `Asn1GeneralizedTime`
+to and from `chrono::DateTime<Utc>`. Going to chrono is exact; coming from it
+truncates to the second, turns a leap second into `:59`, and rejects a year
+outside the type's range.
 
 ## License
 
