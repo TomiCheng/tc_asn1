@@ -133,6 +133,16 @@ impl<T: Encode> Encode for Asn1Constructed<T> {
     }
 }
 
+#[cfg(feature = "zeroize")]
+impl<T: tc_zeroize::Zeroize> tc_zeroize::Zeroize for Asn1Constructed<T> {
+    /// Wipes every element and leaves none; the identifier is kept.
+    /// Constant time with respect to the contents: the work depends only on
+    /// the capacity.
+    fn zeroize(&mut self) {
+        tc_zeroize::Zeroize::zeroize(&mut self.items);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::vec;

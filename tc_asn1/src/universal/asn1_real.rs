@@ -447,6 +447,16 @@ impl Encode for Asn1Real {
     }
 }
 
+#[cfg(feature = "zeroize")]
+impl tc_zeroize::Zeroize for Asn1Real {
+    /// Wipes the octets and leaves the empty contents of zero.
+    /// Constant time with respect to the contents: the work depends only on
+    /// the capacity.
+    fn zeroize(&mut self) {
+        tc_zeroize::Zeroize::zeroize(&mut self.contents);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Asn1Real;

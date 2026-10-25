@@ -336,6 +336,16 @@ impl Encode for Asn1Integer {
     }
 }
 
+#[cfg(feature = "zeroize")]
+impl tc_zeroize::Zeroize for Asn1Integer {
+    /// Wipes the octets and leaves zero, the shortest valid INTEGER.
+    /// Constant time with respect to the contents: the work depends only on
+    /// the capacity.
+    fn zeroize(&mut self) {
+        crate::wipe::wipe_leaving(&mut self.value, &[0]);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::format;

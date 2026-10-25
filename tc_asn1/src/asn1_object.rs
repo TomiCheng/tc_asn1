@@ -474,6 +474,47 @@ impl Encode for Asn1Object {
     }
 }
 
+#[cfg(feature = "zeroize")]
+impl tc_zeroize::Zeroize for Asn1Object {
+    /// Wipes the value in place, recursing through constructed elements; the
+    /// variant and every tag are kept.
+    /// Constant time with respect to the contents: the work depends only on
+    /// the shape of the tree and the capacities.
+    fn zeroize(&mut self) {
+        match self {
+            Self::Boolean(value) => value.zeroize(),
+            Self::Integer(value) => value.zeroize(),
+            Self::BitString(value) => value.zeroize(),
+            Self::OctetString(value) => value.zeroize(),
+            Self::Null(value) => value.zeroize(),
+            Self::Oid(value) => value.zeroize(),
+            Self::Real(value) => value.zeroize(),
+            Self::Enumerated(value) => value.zeroize(),
+            Self::Utf8String(value) => value.zeroize(),
+            Self::RelativeOid(value) => value.zeroize(),
+            Self::Time(value) => value.zeroize(),
+            Self::NumericString(value) => value.zeroize(),
+            Self::PrintableString(value) => value.zeroize(),
+            Self::Ia5String(value) => value.zeroize(),
+            Self::UtcTime(value) => value.zeroize(),
+            Self::GeneralizedTime(value) => value.zeroize(),
+            Self::VisibleString(value) => value.zeroize(),
+            Self::UniversalString(value) => value.zeroize(),
+            Self::BmpString(value) => value.zeroize(),
+            Self::Date(value) => value.zeroize(),
+            Self::TimeOfDay(value) => value.zeroize(),
+            Self::DateTime(value) => value.zeroize(),
+            Self::Duration(value) => value.zeroize(),
+            Self::OidIri(value) => value.zeroize(),
+            Self::RelativeOidIri(value) => value.zeroize(),
+            Self::SequenceOf(value) => value.zeroize(),
+            Self::SetOf(value) => value.zeroize(),
+            Self::Constructed(value) => value.zeroize(),
+            Self::Unknown(value) => value.zeroize(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::string::ToString;

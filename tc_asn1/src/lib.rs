@@ -1,7 +1,8 @@
 //! BER, CER and DER codecs for the ASN.1 universal types (X.690), for
 //! building the structures of X.509 and its neighbours on.
 //!
-//! `no_std` with `alloc`; no dependencies, no macros, no I/O. Values are
+//! `no_std` with `alloc`; no macros, no I/O, and no dependencies unless an
+//! optional feature is on. Values are
 //! decoded from a slice and encoded into one, and every check is done on
 //! the structure before anything is allocated for it.
 //!
@@ -74,7 +75,29 @@
 //! completing the type. A CHOICE dispatches on the tag in
 //! `DecodeInner` and on the variant in `Encode`. Each type states what it
 //! validates and whether it runs in constant time; nothing in this crate
-//! handles secret data, so every method is variable time and documents it.
+//! interprets secret data, so every method is variable time and documents
+//! it. The one exception is erasure: the `Zeroize` implementations below
+//! run in time that depends only on the size of what they wipe.
+//!
+//! # Features
+//!
+//! - `zeroize`, off by default, implements `tc_zeroize::Zeroize` for every
+//!   type that owns data, so a structure holding secret material, such as a
+//!   private key, can erase the octets it decoded. It adds `tc_zeroize`.
+//! - `chrono`, off by default, converts [`Asn1UtcTime`] and
+//!   [`Asn1GeneralizedTime`] to and from `chrono::DateTime<Utc>`. Going to
+//!   chrono is exact; coming from it truncates to the second and turns a
+//!   leap second into `:59`, and a year outside the type's range is
+//!   `MalformedValue`. It adds `chrono`, without its default features.
+//!
+//! `Zeroize` is a capability, not a policy: no type here erases itself on
+//! drop, because none of them knows whether it holds a secret. A key
+//! container that does know implements `Drop` and `ZeroizeOnDrop` itself,
+//! calling `zeroize` on its fields. A zeroized value is still a valid value
+//! of its type and still encodes: integers, enumerations and REAL become
+//! zero, strings and containers become empty, identifiers become their
+//! shortest value (`0.0`, `0`, `/0`), times the earliest value of their
+//! type, and an [`Asn1Any`] keeps its tag with empty contents.
 //!
 //! # Not here
 //!
@@ -101,6 +124,8 @@ mod error;
 mod tagging;
 mod traits;
 mod universal;
+#[cfg(feature = "zeroize")]
+mod wipe;
 
 pub use asn1_any::Asn1Any;
 pub use asn1_constructed::Asn1Constructed;

@@ -30,6 +30,18 @@ enum Kind {
 }
 
 impl Kind {
+    /// The value a zeroized instance is left holding: the earliest date the
+    /// kind allows, midnight, or a zero duration, already normalized.
+    #[cfg(feature = "zeroize")]
+    fn zero(self) -> &'static str {
+        match self {
+            Self::Time | Self::Date => "1582-01-01",
+            Self::Clock => "00:00:00",
+            Self::DateTime => "1582-01-01T00:00:00",
+            Self::Duration => "PT0S",
+        }
+    }
+
     fn validate(self, text: &str) -> Result<String, Asn1Error> {
         match self {
             Self::Time => time_value::time(text),
@@ -184,6 +196,19 @@ macro_rules! time_type {
 
             fn encode(&self, rules: &EncodingOptions, out: &mut [u8]) -> Result<usize, Asn1Error> {
                 self.encode_tagged(Self::TAG, rules, out)
+            }
+        }
+
+        #[cfg(feature = "zeroize")]
+        impl tc_zeroize::Zeroize for $name {
+            /// Wipes the notation and the wire form, then leaves the kind's
+            /// earliest value. Constant time with respect to the contents: the
+            /// work depends only on the capacity.
+            fn zeroize(&mut self) {
+                crate::wipe::wipe_string(&mut self.text);
+                crate::wipe::wipe_string(&mut self.wire);
+                self.text.push_str(Kind::$kind.zero());
+                self.wire = Kind::$kind.wire(&self.text);
             }
         }
     };
