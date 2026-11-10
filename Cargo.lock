@@ -42,6 +42,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tc_asn1_x509"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "tc_asn1",
+ "tc_asn1_x500",
+]
+
+[[package]]
 name = "tc_zeroize"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
