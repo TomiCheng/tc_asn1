@@ -1,0 +1,25 @@
+[package]
+name = "tc_asn1_x509"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "X.509 and PKIX structures (certificates, CRLs, attribute certificates, extensions) on top of tc_asn1."
+readme = "README.md"
+documentation = "https://docs.rs/tc_asn1_x509"
+keywords = ["x509", "pkix", "asn1", "certificate", "no-std"]
+categories = ["encoding", "parser-implementations", "no-std"]
+include = ["src/**", "tests/**", "README.md", "CHANGELOG.md", "LICENSE-MIT", "LICENSE-APACHE"]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+# Conversions between Time, UTCTime, GeneralizedTime and chrono's DateTime<Utc>.
+chrono = ["dep:chrono", "tc_asn1/chrono"]
+
+[dependencies]
+chrono = { version = "0.4.38", default-features = false, optional = true }
+tc_asn1 = { version = "0.1.3", path = "../tc_asn1" }
+tc_asn1_x500 = { version = "0.1.0", path = "../tc_asn1_x500" }

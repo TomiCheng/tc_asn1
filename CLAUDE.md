@@ -21,9 +21,12 @@ The crate list and workspace-wide checks live in the root
 `no_std` + `alloc`. `tc_asn1` has two optional features, off by default and
 each adding one dependency (`zeroize` adds `tc_zeroize`, `chrono` adds `chrono`),
 and no dependencies without them;
-`tc_asn1_x500` has no features and depends on `tc_asn1` alone — CI enforces both with
-`cargo tree` on the `wasm32-unknown-unknown` and `aarch64-unknown-none`
-targets. The codec carries no protocol knowledge: OIDs, attribute types,
+`tc_asn1_x500` has no features and depends on `tc_asn1` alone; `tc_asn1_x509`
+depends on `tc_asn1` and `tc_asn1_x500`, and its optional `chrono` feature adds
+`chrono` and turns on `tc_asn1`'s — CI enforces each with `cargo tree` on the
+`wasm32-unknown-unknown` and `aarch64-unknown-none` targets. `tc_asn1_x509`'s
+`Time` is the RFC 5280 profile: it refuses a GeneralizedTime with fractional
+seconds, which `tc_asn1` accepts, and writes its times to the second. The codec carries no protocol knowledge: OIDs, attribute types,
 extensions and profiles belong to the crates built on it, such as
 `tc_asn1_x500`, never to `tc_asn1` (see the "Not here" section of its crate
 docs).
@@ -55,7 +58,8 @@ Documentation is part of the contract: crates use `#![deny(missing_docs)]`,
 doctests carry the executable examples, and CI runs `cargo doc` with
 `RUSTDOCFLAGS: -D warnings`. An additive public API change belongs in the crate
 README's contract tables — "Tool types" and "Universal types" in
-`tc_asn1/README.md`, "Types" in `tc_asn1_x500/README.md` — and in the
+`tc_asn1/README.md`, "Types" in `tc_asn1_x500/README.md` and
+`tc_asn1_x509/README.md` — and in the
 changelog, not only in the code.
 
 Work happens on `feat/*` branches off `develop`; pull requests target `develop`,

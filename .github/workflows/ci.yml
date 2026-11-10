@@ -52,6 +52,7 @@ jobs:
           key: ${{ matrix.name }}
       - run: cargo test --locked
       - run: cargo test --locked -p tc_asn1 --all-features
+      - run: cargo test --locked -p tc_asn1_x509 --all-features
 
   x86:
     name: Native execution / Linux i686
@@ -81,6 +82,7 @@ jobs:
           RUSTUP_TOOLCHAIN: 1.85.0
       - run: cargo +1.85.0 test --locked
       - run: cargo +1.85.0 test --locked -p tc_asn1 --all-features
+      - run: cargo +1.85.0 test --locked -p tc_asn1_x509 --all-features
 
   quality:
     name: Format, Clippy, docs and package
@@ -102,7 +104,7 @@ jobs:
       - run: cargo doc --locked --no-deps --all-features
       # Packaged together so tc_asn1_x500 is verified against this tc_asn1,
       # not the release on crates.io.
-      - run: cargo package --locked -p tc_asn1 -p tc_asn1_x500
+      - run: cargo package --locked -p tc_asn1 -p tc_asn1_x500 -p tc_asn1_x509
         env:
           # Keep unpacked package manifests outside rust-cache's build tree.
           CARGO_TARGET_DIR: ${{ runner.temp }}/package
@@ -121,6 +123,8 @@ jobs:
       - run: cargo check --locked --target aarch64-unknown-none
       - run: cargo check --locked -p tc_asn1 --all-features --target wasm32-unknown-unknown
       - run: cargo check --locked -p tc_asn1 --all-features --target aarch64-unknown-none
+      - run: cargo check --locked -p tc_asn1_x509 --all-features --target wasm32-unknown-unknown
+      - run: cargo check --locked -p tc_asn1_x509 --all-features --target aarch64-unknown-none
       - name: Check dependency-free build
         run: |
           test "$(cargo tree --locked -p tc_asn1 --target aarch64-unknown-none --edges normal --prefix none | wc -l)" -eq 1
@@ -146,4 +150,13 @@ jobs:
             tree="$(cargo tree --locked -p tc_asn1_x500 --target "$target" --edges normal --prefix none)"
             test "$(printf '%s\n' "$tree" | wc -l)" -eq 2
             printf '%s\n' "$tree" | grep -qE '^tc_asn1 v'
+          done
+      - name: Check tc_asn1_x509 depends only on tc_asn1 and tc_asn1_x500, and chrono adds only chrono
+        run: |
+          names() {
+            cargo tree --locked -p tc_asn1_x509 --edges normal --prefix none "$@" | cut -d' ' -f1 | sort -u | paste -sd' '
+          }
+          for target in aarch64-unknown-none wasm32-unknown-unknown; do
+            test "$(names --target "$target")" = 'tc_asn1 tc_asn1_x500 tc_asn1_x509'
+            test "$(names --features chrono --target "$target")" = 'chrono num-traits tc_asn1 tc_asn1_x500 tc_asn1_x509'
           done

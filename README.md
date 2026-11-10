@@ -2,7 +2,8 @@
 
 A Rust workspace for ASN.1. It holds the X.690 codec crate, `tc_asn1`, which
 carries no protocol knowledge of its own, and the crates that build protocol
-structures on it, starting with `tc_asn1_x500` for X.500 names. Each crate is
+structures on it: `tc_asn1_x500` for X.500 names and `tc_asn1_x509` for X.509
+certificates and CRLs. Each crate is
 published separately and keeps its own README, changelog, and validation
 commands.
 
@@ -16,10 +17,12 @@ commands.
 | --- | --- | --- |
 | [`tc_asn1`](tc_asn1) | [![crates.io](https://img.shields.io/crates/v/tc_asn1.svg)](https://crates.io/crates/tc_asn1) [![docs.rs](https://docs.rs/tc_asn1/badge.svg)](https://docs.rs/tc_asn1) | BER, CER and DER codecs for the ASN.1 universal types, and the traits through which a schema's structures become Rust types with the same encoding and decoding as the built-in ones. Any BER can also be decoded into a tree without a schema. `no_std` + `alloc`, no macros, no I/O, and no dependencies unless an optional feature is on. |
 | [`tc_asn1_x500`](tc_asn1_x500) | [![crates.io](https://img.shields.io/crates/v/tc_asn1_x500.svg)](https://crates.io/crates/tc_asn1_x500) [![docs.rs](https://docs.rs/tc_asn1_x500/badge.svg)](https://docs.rs/tc_asn1_x500) | X.500 distinguished names as used for the subject and issuer of X.509 certificates: `Name`, its relative distinguished names and attribute type-and-value pairs, the X.520 `DirectoryString`, and constants for the attribute types found in names. Converts to and from RFC 4514 text and compares strictly or with the matching of RFC 5280 §7.1. `no_std` + `alloc`, depends only on `tc_asn1`. |
+| [`tc_asn1_x509`](tc_asn1_x509) | [![crates.io](https://img.shields.io/crates/v/tc_asn1_x509.svg)](https://crates.io/crates/tc_asn1_x509) [![docs.rs](https://docs.rs/tc_asn1_x509/badge.svg)](https://docs.rs/tc_asn1_x509) | X.509 and PKIX structures after Bouncy Castle's `Asn1.X509`: certificates, CRLs, attribute certificates, every RFC 5280 extension value, `GeneralName` and `AlgorithmIdentifier`. Decoded certificates, CRLs and attribute certificates keep their signed octets as received. `no_std` + `alloc`, depends on `tc_asn1` and `tc_asn1_x500`; a default-off `chrono` feature converts `Time`. |
 
 `tc_asn1` knows the X.690 rules and nothing of any protocol; the OIDs,
 attribute types and matching rules of X.500 live in `tc_asn1_x500`, which
-depends on nothing but `tc_asn1`.
+depends on nothing but `tc_asn1`, and the structures of X.509 and PKIX in
+`tc_asn1_x509`, built on both.
 
 ## Requirements
 
@@ -28,7 +31,8 @@ reaches the heap only through the sysroot `alloc` crate. `tc_asn1` has no
 dependencies by default; its optional features add one each: `zeroize` adds
 `tc_zeroize` to erase secret octets, `chrono` adds `chrono` for converting
 UTCTime and GeneralizedTime. `tc_asn1_x500` has no features and depends only on
-`tc_asn1`.
+`tc_asn1`. `tc_asn1_x509` depends on `tc_asn1` and `tc_asn1_x500`; its optional
+`chrono` feature adds `chrono` and turns on `tc_asn1`'s.
 
 ## Workspace checks
 
