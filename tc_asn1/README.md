@@ -257,7 +257,7 @@ rejects with `NotDer` beyond the header checks every element gets.
 | PrintableString | `13` | `Asn1PrintableString` | the X.680 §41.4 set | — |
 | IA5String | `16` | `Asn1Ia5String` | 7-bit ASCII | — |
 | UTCTime | `17` | `Asn1UtcTime` | `YYMMDDhhmmssZ` only, Gregorian calendar, 1950–2049 | — |
-| GeneralizedTime | `18` | `Asn1GeneralizedTime` | `YYYYMMDDhhmmssZ` only, Gregorian calendar | — |
+| GeneralizedTime | `18` | `Asn1GeneralizedTime` | `YYYYMMDDhhmmss[.f]Z`, fractional seconds to the nanosecond, Gregorian calendar | — |
 | VisibleString | `1A` | `Asn1VisibleString` | `0x20`–`0x7E` | — |
 | UniversalString | `1C` | `Asn1UniversalString` | UCS-4 scalar values | — |
 | BMPString | `1E` | `Asn1BmpString` | UCS-2, no surrogates | — |
@@ -268,8 +268,9 @@ Not represented: TeletexString, VideotexString, GraphicString,
 GeneralString and ObjectDescriptor, which stay opaque as `Asn1Any`; the
 constructed form of the string types, for which `Asn1Constructed` with the
 `CONSTRUCTED_*` tag serves. UTCTime and GeneralizedTime accept the RFC 5280
-forms only, so a UTC offset, omitted seconds or fractional seconds are
-rejected even under BER.
+forms, so a UTC offset or omitted seconds are rejected even under BER;
+GeneralizedTime also accepts fractional seconds, which a certificate reader
+must refuse itself.
 
 ## Features
 
@@ -285,9 +286,9 @@ value, times the earliest value of their type, and an `Asn1Any` keeps its tag
 with empty contents.
 
 `chrono` (off by default) converts `Asn1UtcTime` and `Asn1GeneralizedTime`
-to and from `chrono::DateTime<Utc>`. Going to chrono is exact; coming from it
-truncates to the second, turns a leap second into `:59`, and rejects a year
-outside the type's range.
+to and from `chrono::DateTime<Utc>`. Going to chrono is exact, fractional
+seconds included; coming from it truncates to the second, turns a leap second
+into `:59`, and rejects a year outside the type's range.
 
 ## License
 
