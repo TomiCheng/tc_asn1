@@ -86,9 +86,9 @@
 //!   private key, can erase the octets it decoded. It adds `tc_zeroize`.
 //! - `chrono`, off by default, converts [`Asn1UtcTime`] and
 //!   [`Asn1GeneralizedTime`] to and from `chrono::DateTime<Utc>`. Going to
-//!   chrono is exact; coming from it truncates to the second and turns a
-//!   leap second into `:59`, and a year outside the type's range is
-//!   `MalformedValue`. It adds `chrono`, without its default features.
+//!   chrono is exact, fractional seconds included; coming from it truncates
+//!   to the second and turns a leap second into `:59`, and a year outside the
+//!   type's range is `MalformedValue`. It adds `chrono`, without its default features.
 //!
 //! `Zeroize` is a capability, not a policy: no type here erases itself on
 //! drop, because none of them knows whether it holds a secret. A key

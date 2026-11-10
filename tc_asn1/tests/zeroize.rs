@@ -113,7 +113,10 @@ fn times_are_left_at_the_earliest_value_of_their_type() {
         Asn1UtcTime::new(1950, 1, 1, 0, 0, 0).unwrap(),
     );
     check(
-        Asn1GeneralizedTime::new(2024, 2, 29, 12, 30, 45).unwrap(),
+        Asn1GeneralizedTime::new(2024, 2, 29, 12, 30, 45)
+            .unwrap()
+            .with_nanosecond(5)
+            .unwrap(),
         Asn1GeneralizedTime::new(0, 1, 1, 0, 0, 0).unwrap(),
     );
     check(
