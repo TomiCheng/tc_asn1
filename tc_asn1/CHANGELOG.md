@@ -2,6 +2,31 @@
 
 All notable changes to `tc_asn1` are documented in this file.
 
+## 0.1.3 - Unreleased
+
+### Added
+
+- Fractional seconds in `Asn1GeneralizedTime`, to the nanosecond:
+  `with_nanosecond`, `with_microsecond` and `with_millisecond` set them, and
+  `nanosecond`, `microsecond` and `millisecond` read them, the last two
+  rounding down. Decoding accepts
+  one to nine digits after a full stop; under DER a comma, a trailing zero or
+  a zero fraction is `NotDer`, and BER accepts them. More than nine digits, or
+  a separator without digits, is `MalformedValue`. Encoding always writes the
+  DER form, leaving a zero fraction out, and `Display` adds the digits before
+  the `Z`. RFC 3161 timestamps carry such times.
+
+### Compatibility
+
+- Additive in the API: `new` and the accessors are unchanged, and a time
+  without a fraction encodes, displays and compares as before.
+- Decoding accepts the fractional seconds that 0.1.2 refused as
+  `MalformedValue`. RFC 5280 forbids them in certificates, so a certificate
+  reader that relied on the refusal checks `nanosecond() == 0` itself.
+- With `chrono`, converting to `chrono::DateTime<Utc>` now carries the
+  fraction, which was always zero before. Converting from chrono still
+  truncates to the second; `with_nanosecond` adds the fraction back.
+
 ## 0.1.2 - 2026-10-25
 
 ### Added

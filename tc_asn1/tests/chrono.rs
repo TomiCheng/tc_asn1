@@ -36,6 +36,20 @@ fn generalizedtime_round_trips_through_chrono_at_both_ends_of_its_range() {
 }
 
 #[test]
+fn generalizedtime_keeps_its_fractional_seconds_going_to_chrono() {
+    let time = Asn1GeneralizedTime::new(2026, 11, 10, 8, 30, 0)
+        .unwrap()
+        .with_nanosecond(123_456_789)
+        .unwrap();
+    let instant = NaiveDate::from_ymd_opt(2026, 11, 10)
+        .unwrap()
+        .and_hms_nano_opt(8, 30, 0, 123_456_789)
+        .unwrap()
+        .and_utc();
+    assert_eq!(DateTime::<Utc>::from(time), instant);
+}
+
+#[test]
 fn fractions_are_truncated_and_a_leap_second_becomes_59() {
     let fraction = NaiveDate::from_ymd_opt(2026, 10, 21)
         .unwrap()
