@@ -1,10 +1,10 @@
 //! Reading encoded values from a `std::io::Read`, after Bouncy Castle's
-//! `Asn1InputStream`.
+//! `Asn1InputStream` and `Asn1StreamParser`.
 
 use alloc::vec::Vec;
 use std::io::{self, Read};
 
-use super::{Asn1Event, Asn1Header, Asn1Length, Asn1Tag};
+use super::{Asn1Item, Asn1Length, Asn1Tag};
 use crate::asn1_ref::{parse_len, parse_tag};
 use crate::{Asn1Error, Asn1Object, Decode, DecodingOptions};
 
@@ -21,38 +21,144 @@ fn unexpected_eof() -> io::Error {
     io::Error::from(io::ErrorKind::UnexpectedEof)
 }
 
-/// Reads values one after another from `R`, as Bouncy Castle's
-/// `Asn1InputStream` does: a file, a socket or any other `std::io::Read`.
+// A call the state of its level does not allow; nothing is read for it
+fn misuse(message: &'static str) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidInput, message)
+}
+
+// Where the contents of a level end
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum End {
+    Input,
+    At(u64),
+    Eoc,
+}
+
+// Every step: a read of the next value closes the one in progress
+const ALL_STEPS: &[Step] = &[
+    Step::Header,
+    Step::Len,
+    Step::Body,
+    Step::Opened,
+    Step::Done,
+];
+
+// What read gives next, owned so that a body can borrow the reader after it
+enum Part {
+    Header(Asn1Tag),
+    Len(Asn1Length),
+    Body,
+    End,
+}
+
+// What a level expects next
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Step {
+    Header,
+    Len,
+    Body,
+    Opened,
+    Done,
+}
+
+// The contents of one value being read, or the input itself at level 0
+#[derive(Clone, Copy, Debug)]
+struct Level {
+    end: End,
+    // Contents that are octets rather than values
+    primitive: bool,
+    step: Step,
+    // The value whose header this level is reading
+    constructed: bool,
+    value_end: End,
+}
+
+impl Level {
+    fn new(end: End, primitive: bool) -> Self {
+        Self {
+            end,
+            primitive,
+            step: Step::Header,
+            constructed: false,
+            value_end: End::Input,
+        }
+    }
+}
+
+// An error after which the position in the input is lost
+#[derive(Clone, Copy, Debug)]
+struct Failure {
+    kind: io::ErrorKind,
+    error: Option<Asn1Error>,
+}
+
+impl Failure {
+    fn of(error: &io::Error) -> Self {
+        Self {
+            kind: error.kind(),
+            error: error
+                .get_ref()
+                .and_then(|inner| inner.downcast_ref::<Asn1Error>())
+                .copied(),
+        }
+    }
+
+    fn to_error(self) -> io::Error {
+        match self.error {
+            Some(error) => io::Error::new(self.kind, error),
+            None => io::Error::from(self.kind),
+        }
+    }
+}
+
+/// Reads values from `R`, as Bouncy Castle's `Asn1InputStream` and
+/// `Asn1StreamParser` do: a file, a socket or any other `std::io::Read`.
 ///
-/// It reads exactly the octets of each value and nothing past them, so what
-/// follows a value stays in `R` for the next call or for other use. It reads
-/// a header an octet at a time, so wrap an unbuffered source such as a file or
-/// a socket in a `std::io::BufReader` and keep reading through that.
+/// A value is read in steps, [`read_header`](Self::read_header) for its
+/// identifier octets, [`read_len`](Self::read_len) for its length and
+/// [`read_body`](Self::read_body) for its contents, or with
+/// [`read`](Self::read), which gives whichever of them comes next as an
+/// [`Asn1Item`], or whole in one, with
+/// [`read_value`](Self::read_value) for a known type and
+/// [`read_object`](Self::read_object) for an unknown one. `read_body` gives
+/// an [`Asn1Body`] limited to the contents, with the same steps for the
+/// values inside a constructed one and `std::io::Read` for the octets of a
+/// primitive one, so a value too large to hold is read part by part. The next
+/// read of the same level closes the value before it, skipping what was left
+/// unread of it, so a value need not be read to its end.
 ///
-/// A value is read whole into memory, its header first, then its contents,
-/// and decoded from there. A definite length is checked against
-/// [`DecodingOptions::max_content_len`] before anything is read for it, and
-/// memory grows with the octets that arrive rather than with the length a
-/// peer claims; an indefinite length is followed to its end-of-contents
-/// octets within [`DecodingOptions::depth`]. Values are decoded as BER.
-/// Reading is variable time, for public values only: a decoding branches on
-/// its structure.
+/// Each level keeps a state machine: a call out of order is
+/// `io::ErrorKind::InvalidInput` and reads nothing. An error in the input
+/// leaves the position inside a value, so the reader fails from then on and
+/// every call gives that error again. A value that does not decode as the
+/// type asked for has been read whole by then and does not fail the reader.
 ///
-/// To descend into a value too large to hold, walk it with
-/// [`read`](Self::read) instead, and read its small parts whole with
-/// [`read_value`](Self::read_value) on the way.
+/// It reads exactly the octets of each value and nothing past them. It reads
+/// a header an octet at a time, so wrap an unbuffered source in a
+/// `std::io::BufReader`. A value read whole is held to
+/// [`DecodingOptions::max_content_len`], checked before its contents are
+/// read, and memory grows with the octets that arrive rather than with the
+/// length a peer claims; nesting is held to [`DecodingOptions::depth`].
+/// Values are decoded as BER. Reading is variable time, for public values
+/// only: it branches on the structure.
 ///
 /// Available with the `std` feature.
 ///
-/// ```
-/// use tc_asn1::io::Asn1Reader;
-/// use tc_asn1::{Asn1Boolean, Asn1Integer, DecodingOptions};
+/// Reading the values of a file one after another, here serial numbers
+/// written as DER INTEGERs:
 ///
-/// let wire: &[u8] = &[0x02, 0x01, 0x05, 0x01, 0x01, 0xFF];
-/// let mut reader = Asn1Reader::new(wire, DecodingOptions::default());
-/// assert_eq!(reader.read_value::<Asn1Integer>()?, Some(Asn1Integer::from(5)));
-/// assert_eq!(reader.read_value::<Asn1Boolean>()?, Some(Asn1Boolean::from(true)));
-/// assert_eq!(reader.read_value::<Asn1Integer>()?, None);
+/// ```no_run
+/// use std::fs::File;
+/// use std::io::BufReader;
+///
+/// use tc_asn1::io::Asn1Reader;
+/// use tc_asn1::{Asn1Integer, DecodingOptions};
+///
+/// let file = BufReader::new(File::open("serials.der")?);
+/// let mut reader = Asn1Reader::new(file, DecodingOptions::default());
+/// while let Some(serial) = reader.read_value::<Asn1Integer>()? {
+///     println!("{serial}");
+/// }
 /// # Ok::<(), std::io::Error>(())
 /// ```
 #[derive(Debug)]
@@ -61,171 +167,206 @@ pub struct Asn1Reader<R> {
     options: DecodingOptions,
     // Octets read from `inner` through this reader
     position: u64,
-    // The constructed values read has opened, innermost last
-    frames: Vec<Frame>,
-    // Where the contents of the primitive value read returned end
-    body_end: Option<u64>,
-    // End-of-contents octets read by read_value, for read to report
-    end_of_contents: bool,
-}
-
-// An open constructed value: where its contents end, or None until its
-// end-of-contents octets
-#[derive(Debug)]
-struct Frame {
-    end: Option<u64>,
+    // Level 0 is the input; each body read pushes the next
+    levels: Vec<Level>,
+    failed: Option<Failure>,
 }
 
 impl<R: Read> Asn1Reader<R> {
-    /// A reader from `inner` that decodes every value within `options`.
+    /// A reader from `inner` that reads every value within `options`.
     /// Constant time.
     pub fn new(inner: R, options: DecodingOptions) -> Self {
         Self {
             inner,
             options,
             position: 0,
-            frames: Vec::new(),
-            body_end: None,
-            end_of_contents: false,
+            levels: alloc::vec![Level::new(End::Input, false)],
+            failed: None,
         }
     }
 
-    /// The next step of a walk through the values, Bouncy Castle's
-    /// `Asn1StreamParser`: the start of a constructed value, a primitive
-    /// value whose contents follow, or the end of the innermost open one;
-    /// `None` when the input ends between top-level values.
+    /// The next part of a value as an [`Asn1Item`]: its header when no value
+    /// is in progress, then its length, then its body; `None` when the input
+    /// ends before a value starts. The same steps as
+    /// [`read_header`](Self::read_header), [`read_len`](Self::read_len) and
+    /// [`read_body`](Self::read_body), with their errors, and the two can be
+    /// mixed. Variable time, for public values only.
     ///
-    /// Nothing is read whole, so a walk needs memory for its depth alone,
-    /// whatever the size of the values. Contents of a primitive value left
-    /// unread are skipped. A value reaching past the definite length of the
-    /// one around it, end-of-contents octets where no indefinite length is
-    /// open, and an indefinite primitive are `MalformedValue`; nesting past
-    /// [`DecodingOptions::depth`] is `DepthExceeded`; each as
-    /// `io::ErrorKind::InvalidData`. Input that ends inside an open value is
-    /// `io::ErrorKind::UnexpectedEof`. Variable time, for public values only.
-    pub fn read(&mut self) -> io::Result<Option<Asn1Event>> {
-        self.skip_body()?;
-        if self.end_of_contents {
-            self.end_of_contents = false;
-            self.frames.pop();
-            return Ok(Some(Asn1Event::End));
-        }
-        if self.at_frame_end()? {
-            self.frames.pop();
-            return Ok(Some(Asn1Event::End));
-        }
-
-        let Some(header) = self.read_header_into(&mut Vec::new())? else {
-            return self.end_of_input().map(|()| None);
-        };
-        if header.is_end_of_contents() {
-            return match self.frames.last() {
-                Some(Frame { end: None }) => {
-                    self.frames.pop();
-                    Ok(Some(Asn1Event::End))
-                }
-                _ => Err(invalid(Asn1Error::MalformedValue)),
-            };
-        }
-
-        let end = match header.length() {
-            Asn1Length::Definite(len) => Some(
-                self.position
-                    .checked_add(len as u64)
-                    .ok_or_else(|| invalid(Asn1Error::LengthOverflow))?,
-            ),
-            Asn1Length::Indefinite if header.tag().is_constructed() => None,
-            Asn1Length::Indefinite => return Err(invalid(Asn1Error::MalformedValue)),
-        };
-        self.check_within_frame(end.unwrap_or(self.position))?;
-
-        if header.tag().is_constructed() {
-            if self.depth() > self.options.depth() {
-                return Err(invalid(Asn1Error::DepthExceeded));
-            }
-            self.frames.push(Frame { end });
-            Ok(Some(Asn1Event::Start(header)))
-        } else {
-            self.body_end = end;
-            Ok(Some(Asn1Event::Primitive(header)))
-        }
+    /// # Examples
+    ///
+    /// ```
+    /// use std::io::Read;
+    ///
+    /// use tc_asn1::io::{Asn1Item, Asn1Length, Asn1Reader};
+    /// use tc_asn1::DecodingOptions;
+    ///
+    /// // SEQUENCE { OCTET STRING "abc" }
+    /// let data: &[u8] = &[0x30, 0x05, 0x04, 0x03, b'a', b'b', b'c'];
+    /// let mut reader = Asn1Reader::new(data, DecodingOptions::default());
+    ///
+    /// while let Some(item) = reader.read()? {
+    ///     match item {
+    ///         Asn1Item::Header(tag) => println!("tag {:02X?}", tag.as_bytes()),
+    ///         Asn1Item::Len(Asn1Length::Definite(len)) => println!("len {len}"),
+    ///         Asn1Item::Len(Asn1Length::Indefinite) => println!("len indefinite"),
+    ///         Asn1Item::Body(mut body) => {
+    ///             while let Some(inner) = body.read()? {
+    ///                 match inner {
+    ///                     Asn1Item::Header(tag) => println!("  tag {:02X?}", tag.as_bytes()),
+    ///                     Asn1Item::Len(len) => println!("  len {len:?}"),
+    ///                     Asn1Item::Body(mut octets) => {
+    ///                         let mut contents = Vec::new();
+    ///                         octets.read_to_end(&mut contents)?;
+    ///                         println!("  body {contents:02X?}");
+    ///                     }
+    ///                 }
+    ///             }
+    ///         }
+    ///     }
+    /// }
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn read(&mut self) -> io::Result<Option<Asn1Item<'_, R>>> {
+        Ok(match self.part_at(0)? {
+            Part::Header(tag) => Some(Asn1Item::Header(tag)),
+            Part::Len(length) => Some(Asn1Item::Len(length)),
+            Part::Body => Some(Asn1Item::Body(Asn1Body {
+                reader: self,
+                level: 1,
+            })),
+            Part::End => None,
+        })
     }
 
-    /// The contents of the primitive value [`read`](Self::read) returned
-    /// last, read as they arrive and never past their end; empty when there
-    /// is none. Contents left unread are skipped by the next step. Variable
-    /// time, for public values only.
-    pub fn body(&mut self) -> impl Read + '_ {
-        Body { reader: self }
+    /// Reads the identifier octets of the next value; `None` when the input
+    /// ends before a value starts.
+    ///
+    /// A non-minimal high tag number is `NonMinimalTag`, identifier octets
+    /// beyond 16 and end-of-contents octets out of place are
+    /// `MalformedValue`, each as `io::ErrorKind::InvalidData`; input that
+    /// ends inside them is `io::ErrorKind::UnexpectedEof`. It first closes the
+    /// value before it, skipping what is left of it with the same errors.
+    /// Variable time, for public values only.
+    ///
+    /// # Examples
+    ///
+    /// The steps of a value, here an OCTET STRING whose contents are copied
+    /// out as they arrive:
+    ///
+    /// ```
+    /// use std::io;
+    ///
+    /// use tc_asn1::io::{Asn1Length, Asn1Reader};
+    /// use tc_asn1::DecodingOptions;
+    ///
+    /// let data: &[u8] = &[0x04, 0x05, b'h', b'e', b'l', b'l', b'o'];
+    /// let mut reader = Asn1Reader::new(data, DecodingOptions::default());
+    ///
+    /// let tag = reader.read_header()?.expect("a value");
+    /// assert_eq!(tag.as_bytes(), [0x04]);
+    /// assert_eq!(reader.read_len()?, Asn1Length::Definite(5));
+    /// let mut contents = Vec::new();
+    /// io::copy(&mut reader.read_body()?, &mut contents)?;
+    /// assert_eq!(contents, b"hello");
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn read_header(&mut self) -> io::Result<Option<Asn1Tag>> {
+        self.header_at(0)
     }
 
-    /// Reads the identifier and length octets of the next value and leaves
-    /// its contents unread; `None` when the input ends before a value starts.
+    /// Reads the length octets of the value whose header was just read.
     ///
-    /// For use between top-level values: inside a value that
-    /// [`read`](Self::read) opened it is `io::ErrorKind::InvalidInput`, since
-    /// the walk could not follow contents read past it.
-    ///
-    /// The header follows the rules [`Asn1Ref::parse`](crate::Asn1Ref::parse)
-    /// applies: a non-minimal high tag number is `NonMinimalTag`, the
-    /// reserved length octet `FF` is `MalformedValue`, and a length past
-    /// `usize` is `LengthOverflow`, each as `io::ErrorKind::InvalidData`.
-    /// Identifier octets beyond 16 are `MalformedValue`. Input that ends
-    /// inside the header is `io::ErrorKind::UnexpectedEof`. Variable time,
-    /// for public values only.
-    pub fn read_header(&mut self) -> io::Result<Option<Asn1Header>> {
-        if !self.frames.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "read_header inside a value opened by read",
-            ));
-        }
-        self.skip_body()?;
-        self.read_header_into(&mut Vec::new())
+    /// The reserved octet `FF`, an indefinite length on a primitive value
+    /// and a length reaching past the value around it are `MalformedValue`,
+    /// a length past `usize` is `LengthOverflow`, each as
+    /// `io::ErrorKind::InvalidData`. Anywhere but right after
+    /// [`read_header`](Self::read_header) it is `io::ErrorKind::InvalidInput`.
+    /// Variable time, for public values only.
+    pub fn read_len(&mut self) -> io::Result<Asn1Length> {
+        self.len_at(0)
     }
 
-    /// Reads the next whole value and decodes it as `T`, Bouncy Castle's
-    /// `ReadObject`; `None` when no value follows, at the end of the input
-    /// or, inside a value [`read`](Self::read) opened, at the end of that
-    /// value, which `read` then reports as [`Asn1Event::End`].
+    /// The contents of the value whose length was just read, as an
+    /// [`Asn1Body`] that cannot read past them: values to read with the same
+    /// steps when it is constructed, octets to read through `std::io::Read`
+    /// when it is primitive.
     ///
-    /// Input that ends inside a value is `io::ErrorKind::UnexpectedEof`. A
-    /// value over the limits, or one that does not decode as `T`, is
-    /// `io::ErrorKind::InvalidData` carrying the [`Asn1Error`]; the value has
-    /// been read by then, so the next call starts after it. Variable time,
-    /// for public values only.
+    /// Nesting past [`DecodingOptions::depth`] is `DepthExceeded`, as
+    /// `io::ErrorKind::InvalidData`. Anywhere but right after
+    /// [`read_len`](Self::read_len) it is `io::ErrorKind::InvalidInput`.
+    /// Variable time, for public values only.
+    pub fn read_body(&mut self) -> io::Result<Asn1Body<'_, R>> {
+        self.body_at(0)?;
+        Ok(Asn1Body {
+            reader: self,
+            level: 1,
+        })
+    }
+
+    /// Reads the next value whole and decodes it as `T`, Bouncy Castle's
+    /// `ReadObject`; `None` when the input ends before a value starts.
+    ///
+    /// Input that ends inside the value is `io::ErrorKind::UnexpectedEof`;
+    /// a value over the limits is `io::ErrorKind::InvalidData` carrying the
+    /// [`Asn1Error`]. A value that does not decode as `T` is
+    /// `io::ErrorKind::InvalidData` too, but it has been read, so the next
+    /// call starts after it. It first closes the value before it, as
+    /// [`read_header`](Self::read_header) does. Variable time, for public
+    /// values only.
+    ///
+    /// # Examples
+    ///
+    /// A file sent over a socket in chunks, each chunk an OCTET STRING of at
+    /// most 64 KiB; the limits bound what the peer can make it read:
+    ///
+    /// ```no_run
+    /// use std::fs::File;
+    /// use std::io::{BufReader, Write};
+    /// use std::net::TcpStream;
+    ///
+    /// use tc_asn1::io::Asn1Reader;
+    /// use tc_asn1::{Asn1OctetString, DecodingOptions};
+    ///
+    /// let stream = TcpStream::connect("localhost:4000")?;
+    /// let options = DecodingOptions::new(4, 64 * 1024, 16);
+    /// let mut reader = Asn1Reader::new(BufReader::new(stream), options);
+    /// let mut out = File::create("received.bin")?;
+    /// while let Some(chunk) = reader.read_value::<Asn1OctetString>()? {
+    ///     out.write_all(chunk.as_bytes())?;
+    /// }
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
     pub fn read_value<T: Decode>(&mut self) -> io::Result<Option<T>> {
-        self.skip_body()?;
-        if self.end_of_contents || self.at_frame_end()? {
-            return Ok(None);
-        }
-
-        let mut buffer = Vec::new();
-        let Some(header) = self.read_header_into(&mut buffer)? else {
-            return self.end_of_input().map(|()| None);
-        };
-        if header.is_end_of_contents() && matches!(self.frames.last(), Some(Frame { end: None })) {
-            self.end_of_contents = true;
-            return Ok(None);
-        }
-        self.read_contents(&header, &mut buffer, self.depth())?;
-        self.check_within_frame(self.position)?;
-
-        let (used, value) = T::decode(&buffer, &self.options).map_err(invalid)?;
-        if used != buffer.len() {
-            return Err(invalid(Asn1Error::TrailingData));
-        }
-        Ok(Some(value))
+        self.value_at(0)
     }
 
-    /// Reads the next whole value as an [`Asn1Object`], for input whose
+    /// Reads the next value whole as an [`Asn1Object`], for input whose
     /// type is not known; [`read_value`](Self::read_value) with `Asn1Object`. Variable
     /// time, for public values only.
+    ///
+    /// # Examples
+    ///
+    /// Reading a file whose content is not known, each value as a tree:
+    ///
+    /// ```no_run
+    /// use std::fs::File;
+    /// use std::io::BufReader;
+    ///
+    /// use tc_asn1::io::Asn1Reader;
+    /// use tc_asn1::DecodingOptions;
+    ///
+    /// let file = BufReader::new(File::open("unknown.der")?);
+    /// let mut reader = Asn1Reader::new(file, DecodingOptions::default());
+    /// while let Some(object) = reader.read_object()? {
+    ///     println!("{object:?}");
+    /// }
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
     pub fn read_object(&mut self) -> io::Result<Option<Asn1Object>> {
         self.read_value::<Asn1Object>()
     }
 
-    /// The limits every value is decoded within. Constant time.
+    /// The limits every value is read within. Constant time.
     pub fn options(&self) -> &DecodingOptions {
         &self.options
     }
@@ -235,10 +376,10 @@ impl<R: Read> Asn1Reader<R> {
         &self.inner
     }
 
-    /// The reader underneath, to read other data between top-level values.
-    /// What is read through it is not counted, so reading through it inside
-    /// a value that [`read`](Self::read) opened breaks the walk. Constant
-    /// time.
+    /// The reader underneath, to read other data between values. What is
+    /// read through it is not counted and a value in progress is not closed
+    /// first, so use it only after the last value read was read to its end.
+    /// Constant time.
     pub fn get_mut(&mut self) -> &mut R {
         &mut self.inner
     }
@@ -248,82 +389,269 @@ impl<R: Read> Asn1Reader<R> {
         self.inner
     }
 
-    // The nesting of the next value: 0 at the top level
-    fn depth(&self) -> u32 {
-        u32::try_from(self.frames.len()).unwrap_or(u32::MAX)
-    }
-
-    // Whether the innermost open value has a definite length now used up
-    fn at_frame_end(&self) -> io::Result<bool> {
-        match self.frames.last() {
-            Some(Frame { end: Some(end) }) if self.position > *end => {
-                Err(invalid(Asn1Error::MalformedValue))
+    // Runs one call, failing the reader on an error that loses the position
+    fn guarded<T>(&mut self, call: impl FnOnce(&mut Self) -> io::Result<T>) -> io::Result<T> {
+        if let Some(failure) = self.failed {
+            return Err(failure.to_error());
+        }
+        let result = call(self);
+        if let Err(error) = &result {
+            if error.kind() != io::ErrorKind::InvalidInput {
+                self.failed = Some(Failure::of(error));
             }
-            Some(Frame { end: Some(end) }) => Ok(self.position == *end),
-            _ => Ok(false),
         }
+        result
     }
 
-    // A value ending at `end` must end within the innermost open value
-    fn check_within_frame(&self, end: u64) -> io::Result<()> {
-        match self.frames.last() {
-            Some(Frame {
-                end: Some(frame_end),
-            }) if end > *frame_end => Err(invalid(Asn1Error::MalformedValue)),
-            _ => Ok(()),
+    // The level `level` when it reads values and expects `step`
+    fn expect(&self, level: usize, steps: &[Step], message: &'static str) -> io::Result<Level> {
+        let current = self.levels[level];
+        if current.primitive {
+            return Err(misuse(
+                "the contents of a primitive value are octets, read through io::Read",
+            ));
         }
+        if !steps.contains(&current.step) {
+            return Err(misuse(message));
+        }
+        Ok(current)
     }
 
-    // The input ended before a value: the end of the walk at the top level,
-    // and inside an open value an unexpected one
-    fn end_of_input(&self) -> io::Result<()> {
-        if self.frames.is_empty() {
-            Ok(())
-        } else {
-            Err(unexpected_eof())
-        }
-    }
-
-    // Skips what is left of the contents of the primitive value read returned
-    fn skip_body(&mut self) -> io::Result<()> {
-        if let Some(end) = self.body_end.take() {
-            let left = end - self.position;
-            let skipped = io::copy(&mut (&mut self.inner).take(left), &mut io::sink())?;
-            self.position += skipped;
-            if skipped != left {
-                return Err(unexpected_eof());
+    fn part_at(&mut self, level: usize) -> io::Result<Part> {
+        let current = self.expect(level, ALL_STEPS, "")?;
+        Ok(match current.step {
+            Step::Len => Part::Len(self.len_at(level)?),
+            Step::Body => {
+                self.body_at(level)?;
+                Part::Body
             }
+            _ => match self.header_at(level)? {
+                Some(tag) => Part::Header(tag),
+                None => Part::End,
+            },
+        })
+    }
+
+    fn header_at(&mut self, level: usize) -> io::Result<Option<Asn1Tag>> {
+        self.guarded(|reader| {
+            reader.expect(level, ALL_STEPS, "")?;
+            reader.close(level)?;
+            if reader.levels[level].step == Step::Done {
+                return Ok(None);
+            }
+            let mut raw = Vec::new();
+            let Some(tag) = reader.next_tag(level, &mut raw)? else {
+                reader.levels[level].step = Step::Done;
+                return Ok(None);
+            };
+            let current = &mut reader.levels[level];
+            current.step = Step::Len;
+            current.constructed = tag.is_constructed();
+            Ok(Some(tag))
+        })
+    }
+
+    fn len_at(&mut self, level: usize) -> io::Result<Asn1Length> {
+        self.guarded(|reader| {
+            let current = reader.expect(level, &[Step::Len], "read_len right after read_header")?;
+            let length = reader.read_length(&mut Vec::new())?;
+            let value_end = reader.value_end(current.constructed, length)?;
+            let current = &mut reader.levels[level];
+            current.value_end = value_end;
+            current.step = Step::Body;
+            Ok(length)
+        })
+    }
+
+    fn body_at(&mut self, level: usize) -> io::Result<()> {
+        self.guarded(|reader| {
+            reader.expect(level, &[Step::Body], "read_body right after read_len, once")?;
+            reader.open_body(level)
+        })
+    }
+
+    // Closes the value in progress at `level`, if any, skipping what is
+    // left of it and reading its end-of-contents octets
+    fn close(&mut self, level: usize) -> io::Result<()> {
+        if self.levels[level].step == Step::Len {
+            let constructed = self.levels[level].constructed;
+            let length = self.read_length(&mut Vec::new())?;
+            let value_end = self.value_end(constructed, length)?;
+            let current = &mut self.levels[level];
+            current.value_end = value_end;
+            current.step = Step::Body;
+        }
+        if self.levels[level].step == Step::Body {
+            self.open_body(level)?;
+        }
+        while self.levels.len() > level + 1 {
+            self.finish_innermost()?;
         }
         Ok(())
     }
 
-    // The first octet of the next value, or None at the end of the input
-    fn read_first_octet(&mut self) -> io::Result<Option<u8>> {
-        let mut octet = [0u8; 1];
-        loop {
-            match self.inner.read(&mut octet) {
-                Ok(0) => return Ok(None),
-                Ok(_) => {
-                    self.position += 1;
-                    return Ok(Some(octet[0]));
+    fn value_at<T: Decode>(&mut self, level: usize) -> io::Result<Option<T>> {
+        let buffer = self.guarded(|reader| {
+            reader.expect(level, ALL_STEPS, "")?;
+            reader.close(level)?;
+            if reader.levels[level].step == Step::Done {
+                return Ok(None);
+            }
+            let mut buffer = Vec::new();
+            let Some(tag) = reader.next_tag(level, &mut buffer)? else {
+                reader.levels[level].step = Step::Done;
+                return Ok(None);
+            };
+            let length = reader.read_length(&mut buffer)?;
+            reader.value_end(tag.is_constructed(), length)?;
+            let depth = u32::try_from(level).unwrap_or(u32::MAX);
+            reader.read_contents(tag.is_constructed(), length, &mut buffer, depth)?;
+            Ok(Some(buffer))
+        })?;
+        let Some(buffer) = buffer else {
+            return Ok(None);
+        };
+        let (used, value) = T::decode(&buffer, &self.options).map_err(invalid)?;
+        if used != buffer.len() {
+            return Err(invalid(Asn1Error::TrailingData));
+        }
+        Ok(Some(value))
+    }
+
+    fn raw_at(&mut self, level: usize, buf: &mut [u8]) -> io::Result<usize> {
+        self.guarded(|reader| {
+            if reader.levels.len() != level + 1 || reader.levels[level].step != Step::Header {
+                return Err(misuse(
+                    "io::Read on a body between its values, not inside the steps of one",
+                ));
+            }
+            let End::At(end) = reader.levels[level].end else {
+                return Err(misuse(
+                    "io::Read on a body of definite length; an indefinite one ends at end-of-contents octets",
+                ));
+            };
+            let left = end - reader.position;
+            if left == 0 || buf.is_empty() {
+                return Ok(0);
+            }
+            let want = buf.len().min(usize::try_from(left).unwrap_or(usize::MAX));
+            let read = loop {
+                match reader.inner.read(&mut buf[..want]) {
+                    Ok(read) => break read,
+                    Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(error) => return Err(error),
                 }
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-                Err(error) => return Err(error),
+            };
+            if read == 0 {
+                return Err(unexpected_eof());
+            }
+            reader.position += read as u64;
+            Ok(read)
+        })
+    }
+
+    // Pushes the level of the contents of the value whose length was read
+    fn open_body(&mut self, level: usize) -> io::Result<()> {
+        let current = self.levels[level];
+        let depth = u32::try_from(level + 1).unwrap_or(u32::MAX);
+        if current.constructed && depth > self.options.depth() {
+            return Err(invalid(Asn1Error::DepthExceeded));
+        }
+        self.levels[level].step = Step::Opened;
+        self.levels
+            .push(Level::new(current.value_end, !current.constructed));
+        Ok(())
+    }
+
+    // Reads the innermost level to its end and closes it in its parent
+    fn finish_innermost(&mut self) -> io::Result<()> {
+        let index = self.levels.len() - 1;
+        let current = self.levels[index];
+        match current.step {
+            Step::Len => {
+                let length = self.read_length(&mut Vec::new())?;
+                let value_end = self.value_end(current.constructed, length)?;
+                let current = &mut self.levels[index];
+                current.value_end = value_end;
+                current.step = Step::Body;
+            }
+            Step::Body => self.open_body(index)?,
+            Step::Header if current.end == End::Eoc => {
+                let tag = self.next_tag(index, &mut Vec::new())?;
+                let current = &mut self.levels[index];
+                match tag {
+                    Some(tag) => {
+                        current.step = Step::Len;
+                        current.constructed = tag.is_constructed();
+                    }
+                    None => current.step = Step::Done,
+                }
+            }
+            Step::Header | Step::Done => {
+                if let End::At(end) = current.end {
+                    self.skip(end - self.position)?;
+                }
+                self.levels.pop();
+                if let Some(parent) = self.levels.last_mut() {
+                    parent.step = Step::Header;
+                }
+            }
+            Step::Opened => unreachable!("a level with an opened body has that body above it"),
+        }
+        Ok(())
+    }
+
+    // The innermost definite end around the position
+    fn limit(&self) -> Option<u64> {
+        self.levels.iter().rev().find_map(|level| match level.end {
+            End::At(end) => Some(end),
+            _ => None,
+        })
+    }
+
+    // Where the contents of a value whose header ends here end, within the
+    // values around it
+    fn value_end(&self, constructed: bool, length: Asn1Length) -> io::Result<End> {
+        let end = match length {
+            Asn1Length::Definite(len) => End::At(
+                self.position
+                    .checked_add(len as u64)
+                    .ok_or_else(|| invalid(Asn1Error::LengthOverflow))?,
+            ),
+            Asn1Length::Indefinite if constructed => End::Eoc,
+            Asn1Length::Indefinite => return Err(invalid(Asn1Error::MalformedValue)),
+        };
+        if let (Some(limit), End::At(end)) = (self.limit(), end) {
+            if end > limit {
+                return Err(invalid(Asn1Error::MalformedValue));
             }
         }
+        Ok(end)
     }
 
-    fn read_octet(&mut self, buffer: &mut Vec<u8>) -> io::Result<u8> {
-        let mut octet = [0u8; 1];
-        self.inner.read_exact(&mut octet)?;
-        self.position += 1;
-        buffer.push(octet[0]);
-        Ok(octet[0])
+    // The identifier octets of the next value of `level`, appended to `raw`;
+    // None at the end of the level, its end-of-contents octets read
+    fn next_tag(&mut self, level: usize, raw: &mut Vec<u8>) -> io::Result<Option<Asn1Tag>> {
+        let end = self.levels[level].end;
+        if end == End::At(self.position) {
+            return Ok(None);
+        }
+        let Some(tag) = self.read_tag(raw)? else {
+            return match end {
+                End::Input => Ok(None),
+                _ => Err(unexpected_eof()),
+            };
+        };
+        if tag.as_bytes() == [0x00] {
+            if end != End::Eoc || self.read_octet(raw)? != 0x00 {
+                return Err(invalid(Asn1Error::MalformedValue));
+            }
+            return Ok(None);
+        }
+        Ok(Some(tag))
     }
 
-    // Reads one header, appending its octets to `raw`; None when the input
-    // ends before its first octet
-    fn read_header_into(&mut self, raw: &mut Vec<u8>) -> io::Result<Option<Asn1Header>> {
+    fn read_tag(&mut self, raw: &mut Vec<u8>) -> io::Result<Option<Asn1Tag>> {
         let start = raw.len();
         let Some(first) = self.read_first_octet()? else {
             return Ok(None);
@@ -339,17 +667,62 @@ impl<R: Read> Asn1Reader<R> {
                 Err(error) => return Err(invalid(error)),
             }
         };
+        Ok(Some(Asn1Tag::new(raw[start..start + tag_len].to_vec())))
+    }
 
-        let first_length = self.read_octet(raw)?;
-        if first_length > 0x80 && first_length != 0xFF {
-            for _ in 0..first_length & 0x7F {
+    fn read_length(&mut self, raw: &mut Vec<u8>) -> io::Result<Asn1Length> {
+        let start = raw.len();
+        let first = self.read_octet(raw)?;
+        if first > 0x80 && first != 0xFF {
+            for _ in 0..first & 0x7F {
                 self.read_octet(raw)?;
             }
         }
-        let (_, length) = parse_len(&raw[start + tag_len..]).map_err(invalid)?;
-        let tag = Asn1Tag::new(raw[start..start + tag_len].to_vec());
-        let length = length.map_or(Asn1Length::Indefinite, Asn1Length::Definite);
-        Ok(Some(Asn1Header::new(tag, length)))
+        let (_, length) = parse_len(&raw[start..]).map_err(invalid)?;
+        Ok(length.map_or(Asn1Length::Indefinite, Asn1Length::Definite))
+    }
+
+    // Refuses to read past the innermost definite end
+    fn check_room(&self, more: u64) -> io::Result<()> {
+        match self.limit() {
+            Some(limit) if self.position + more > limit => Err(invalid(Asn1Error::MalformedValue)),
+            _ => Ok(()),
+        }
+    }
+
+    // The first octet of a value, or None at the end of the input
+    fn read_first_octet(&mut self) -> io::Result<Option<u8>> {
+        self.check_room(1)?;
+        let mut octet = [0u8; 1];
+        loop {
+            match self.inner.read(&mut octet) {
+                Ok(0) => return Ok(None),
+                Ok(_) => {
+                    self.position += 1;
+                    return Ok(Some(octet[0]));
+                }
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    fn read_octet(&mut self, raw: &mut Vec<u8>) -> io::Result<u8> {
+        self.check_room(1)?;
+        let mut octet = [0u8; 1];
+        self.inner.read_exact(&mut octet)?;
+        self.position += 1;
+        raw.push(octet[0]);
+        Ok(octet[0])
+    }
+
+    fn skip(&mut self, count: u64) -> io::Result<()> {
+        let skipped = io::copy(&mut (&mut self.inner).take(count), &mut io::sink())?;
+        self.position += skipped;
+        if skipped != count {
+            return Err(unexpected_eof());
+        }
+        Ok(())
     }
 
     fn reserve(&self, buffer: &[u8], more: usize) -> io::Result<()> {
@@ -363,11 +736,12 @@ impl<R: Read> Asn1Reader<R> {
         Ok(())
     }
 
-    // Copies the contents of the value whose header is already in `buffer`,
+    // Appends the contents of a value whose header is already in `buffer`,
     // following an indefinite length to its end-of-contents octets
     fn read_contents(
         &mut self,
-        header: &Asn1Header,
+        constructed: bool,
+        length: Asn1Length,
         buffer: &mut Vec<u8>,
         depth: u32,
     ) -> io::Result<()> {
@@ -375,12 +749,13 @@ impl<R: Read> Asn1Reader<R> {
             return Err(invalid(Asn1Error::DepthExceeded));
         }
         self.reserve(buffer, 0)?;
-        match header.length() {
+        match length {
             Asn1Length::Definite(len) => {
                 if len > self.options.max_content_len() {
                     return Err(invalid(Asn1Error::ContentLengthExceeded));
                 }
                 self.reserve(buffer, len)?;
+                self.check_room(len as u64)?;
                 // Grows with the octets that arrive, not with the length claimed
                 let read = (&mut self.inner).take(len as u64).read_to_end(buffer)?;
                 self.position += read as u64;
@@ -390,43 +765,163 @@ impl<R: Read> Asn1Reader<R> {
                 Ok(())
             }
             Asn1Length::Indefinite => {
-                // Only a constructed value may have an indefinite length
-                if !header.tag().is_constructed() {
+                if !constructed {
                     return Err(invalid(Asn1Error::MalformedValue));
                 }
                 loop {
-                    let child = self.read_header_into(buffer)?.ok_or_else(unexpected_eof)?;
-                    if child.is_end_of_contents() {
+                    let tag = self.read_tag(buffer)?.ok_or_else(unexpected_eof)?;
+                    let length = self.read_length(buffer)?;
+                    if tag.as_bytes() == [0x00] {
+                        if length != Asn1Length::Definite(0) {
+                            return Err(invalid(Asn1Error::MalformedValue));
+                        }
                         return Ok(());
                     }
-                    self.read_contents(&child, buffer, depth + 1)?;
+                    self.read_contents(tag.is_constructed(), length, buffer, depth + 1)?;
                 }
             }
         }
     }
 }
 
-// The contents of the primitive value read returned, counted as they are read
-struct Body<'a, R> {
+/// The contents of one value, from [`Asn1Reader::read_body`] or
+/// [`Asn1Body::read_body`], which cannot be read past.
+///
+/// The contents of a constructed value are values, read with the same steps
+/// as on [`Asn1Reader`]: [`read`](Self::read), [`read_header`](Self::read_header),
+/// [`read_len`](Self::read_len) and [`read_body`](Self::read_body), or
+/// whole with [`read_value`](Self::read_value) and
+/// [`read_object`](Self::read_object); `None` from `read_header` or `read_value`
+/// is the end of the contents. The contents of a primitive value are
+/// octets, read through `std::io::Read`, which also copies the contents of a
+/// constructed value of definite length as they are. While a body is held,
+/// the reader it came from cannot be used; what it leaves unread is skipped
+/// by the next read on that reader.
+///
+/// # Examples
+///
+/// Printing the structure of data whose content is not known, as
+/// `openssl asn1parse` does, with the first octets of each primitive value:
+///
+/// ```
+/// use std::io::{self, Read};
+///
+/// use tc_asn1::io::{Asn1Body, Asn1Reader};
+/// use tc_asn1::DecodingOptions;
+///
+/// fn dump<R: Read>(body: &mut Asn1Body<'_, R>, indent: usize) -> io::Result<()> {
+///     while let Some(tag) = body.read_header()? {
+///         let length = body.read_len()?;
+///         if tag.is_constructed() {
+///             println!("{:indent$}{:02X?} {length:?}", "", tag.as_bytes());
+///             dump(&mut body.read_body()?, indent + 2)?;
+///         } else {
+///             // A primitive value may be large: look at its first octets only
+///             let mut head = Vec::new();
+///             body.read_body()?.take(16).read_to_end(&mut head)?;
+///             println!("{:indent$}{:02X?} {head:02X?}", "", tag.as_bytes());
+///         }
+///     }
+///     Ok(())
+/// }
+///
+/// // SEQUENCE (indefinite) { INTEGER 5, OCTET STRING "abc" }, as from a file
+/// let data: &[u8] = &[
+///     0x30, 0x80, 0x02, 0x01, 0x05, 0x04, 0x03, b'a', b'b', b'c', 0x00, 0x00,
+/// ];
+/// let mut reader = Asn1Reader::new(data, DecodingOptions::default());
+/// while let Some(tag) = reader.read_header()? {
+///     let length = reader.read_len()?;
+///     println!("{:02X?} {length:?}", tag.as_bytes());
+///     if tag.is_constructed() {
+///         dump(&mut reader.read_body()?, 2)?;
+///     }
+/// }
+/// # Ok::<(), std::io::Error>(())
+/// ```
+///
+/// A SEQUENCE OF too many entries to hold at once, such as the serial
+/// numbers of a large CRL, taken one entry at a time:
+///
+/// ```
+/// use tc_asn1::io::Asn1Reader;
+/// use tc_asn1::{Asn1Integer, DecodingOptions};
+///
+/// // SEQUENCE OF INTEGER, as from a file
+/// let data: &[u8] = &[0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x02];
+/// let mut reader = Asn1Reader::new(data, DecodingOptions::default());
+///
+/// reader.read_header()?;
+/// reader.read_len()?;
+/// {
+///     let mut entries = reader.read_body()?;
+///     while let Some(serial) = entries.read_value::<Asn1Integer>()? {
+///         println!("{serial}");
+///     }
+/// }
+/// assert!(reader.read_header()?.is_none());
+/// # Ok::<(), std::io::Error>(())
+/// ```
+#[derive(Debug)]
+pub struct Asn1Body<'a, R> {
     reader: &'a mut Asn1Reader<R>,
+    level: usize,
 }
 
-impl<R: Read> Read for Body<'_, R> {
+impl<R: Read> Asn1Body<'_, R> {
+    /// [`Asn1Reader::read`] for the values of this body; `None` at its end.
+    pub fn read(&mut self) -> io::Result<Option<Asn1Item<'_, R>>> {
+        Ok(match self.reader.part_at(self.level)? {
+            Part::Header(tag) => Some(Asn1Item::Header(tag)),
+            Part::Len(length) => Some(Asn1Item::Len(length)),
+            Part::Body => Some(Asn1Item::Body(Asn1Body {
+                reader: &mut *self.reader,
+                level: self.level + 1,
+            })),
+            Part::End => None,
+        })
+    }
+
+    /// [`Asn1Reader::read_header`] for the values of this body; `None` at
+    /// its end.
+    pub fn read_header(&mut self) -> io::Result<Option<Asn1Tag>> {
+        self.reader.header_at(self.level)
+    }
+
+    /// [`Asn1Reader::read_len`] for the values of this body.
+    pub fn read_len(&mut self) -> io::Result<Asn1Length> {
+        self.reader.len_at(self.level)
+    }
+
+    /// [`Asn1Reader::read_body`] for the values of this body.
+    pub fn read_body(&mut self) -> io::Result<Asn1Body<'_, R>> {
+        self.reader.body_at(self.level)?;
+        Ok(Asn1Body {
+            reader: &mut *self.reader,
+            level: self.level + 1,
+        })
+    }
+
+    /// [`Asn1Reader::read_value`] for the values of this body; `None` at its end.
+    pub fn read_value<T: Decode>(&mut self) -> io::Result<Option<T>> {
+        self.reader.value_at(self.level)
+    }
+
+    /// [`Asn1Reader::read_object`] for the values of this body; `None` at
+    /// its end.
+    pub fn read_object(&mut self) -> io::Result<Option<Asn1Object>> {
+        self.read_value::<Asn1Object>()
+    }
+}
+
+/// The octets of the contents, never past their end: those of a primitive
+/// value, or those of a constructed value of definite length as they are,
+/// between its values. On an indefinite length, or inside the steps of a
+/// value, it is `io::ErrorKind::InvalidInput`. Variable time, for public
+/// values only.
+impl<R: Read> Read for Asn1Body<'_, R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let Some(end) = self.reader.body_end else {
-            return Ok(0);
-        };
-        let left = end - self.reader.position;
-        if left == 0 || buf.is_empty() {
-            return Ok(0);
-        }
-        let want = buf.len().min(usize::try_from(left).unwrap_or(usize::MAX));
-        let read = self.reader.inner.read(&mut buf[..want])?;
-        if read == 0 {
-            return Err(unexpected_eof());
-        }
-        self.reader.position += read as u64;
-        Ok(read)
+        self.reader.raw_at(self.level, buf)
     }
 }
 
@@ -434,17 +929,39 @@ impl<R: Read> Read for Body<'_, R> {
 mod tests {
     use alloc::vec;
     use alloc::vec::Vec;
-    use std::io;
+    use std::io::{self, Read};
 
-    use super::Asn1Reader;
-    use crate::io::{Asn1Event, Asn1Length, Asn1Writer};
+    use super::{Asn1Body, Asn1Reader};
+    use crate::io::{Asn1Item, Asn1Length, Asn1Writer};
     use crate::{
-        Asn1Class, Asn1Error, Asn1Integer, Asn1OctetString, DecodingOptions, EncodingOptions,
+        Asn1Any, Asn1Class, Asn1Error, Asn1Integer, Asn1OctetString, DecodingOptions,
+        EncodingOptions,
     };
 
     fn error_of(error: io::Error) -> Asn1Error {
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
         *error.into_inner().unwrap().downcast::<Asn1Error>().unwrap()
+    }
+
+    fn open(wire: &[u8]) -> Asn1Reader<&[u8]> {
+        Asn1Reader::new(wire, DecodingOptions::default())
+    }
+
+    // Reads every value of a body in steps, collecting tags and primitive contents
+    fn walk<R: Read>(body: &mut Asn1Body<'_, R>, seen: &mut Vec<Vec<u8>>) -> io::Result<()> {
+        while let Some(tag) = body.read_header()? {
+            body.read_len()?;
+            seen.push(tag.as_bytes().to_vec());
+            let mut contents = body.read_body()?;
+            if tag.is_constructed() {
+                walk(&mut contents, seen)?;
+            } else {
+                let mut octets = Vec::new();
+                contents.read_to_end(&mut octets)?;
+                seen.push(octets);
+            }
+        }
+        Ok(())
     }
 
     #[test]
@@ -454,7 +971,7 @@ mod tests {
         writer.write(&Asn1OctetString::new(&[7; 200])).unwrap();
         let bytes = writer.into_inner();
 
-        let mut reader = Asn1Reader::new(&bytes[..], DecodingOptions::default());
+        let mut reader = open(&bytes);
         assert_eq!(
             reader.read_value::<Asn1Integer>().unwrap(),
             Some(Asn1Integer::from(300))
@@ -465,14 +982,325 @@ mod tests {
     }
 
     #[test]
+    fn a_value_is_read_in_steps() {
+        let wire: &[u8] = &[0x04, 0x05, b'h', b'e', b'l', b'l', b'o', 0x02, 0x01, 0x07];
+        let mut reader = open(wire);
+
+        let tag = reader.read_header().unwrap().unwrap();
+        assert_eq!(tag.as_bytes(), [0x04]);
+        assert_eq!(tag.class(), Asn1Class::Universal);
+        assert!(!tag.is_constructed());
+        assert_eq!(reader.read_len().unwrap(), Asn1Length::Definite(5));
+        let mut contents = Vec::new();
+        reader
+            .read_body()
+            .unwrap()
+            .read_to_end(&mut contents)
+            .unwrap();
+        assert_eq!(contents, b"hello");
+
+        assert_eq!(
+            reader.read_value::<Asn1Integer>().unwrap(),
+            Some(Asn1Integer::from(7))
+        );
+        assert!(reader.read_header().unwrap().is_none());
+    }
+
+    // The same walk as `walk`, through read
+    fn walk_items<R: Read>(body: &mut Asn1Body<'_, R>, seen: &mut Vec<Vec<u8>>) -> io::Result<()> {
+        let mut constructed = false;
+        while let Some(item) = body.read()? {
+            match item {
+                Asn1Item::Header(tag) => {
+                    constructed = tag.is_constructed();
+                    seen.push(tag.as_bytes().to_vec());
+                }
+                Asn1Item::Len(_) => {}
+                Asn1Item::Body(mut contents) if constructed => walk_items(&mut contents, seen)?,
+                Asn1Item::Body(mut contents) => {
+                    let mut octets = Vec::new();
+                    contents.read_to_end(&mut octets)?;
+                    seen.push(octets);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn read_gives_header_len_and_body_in_turn_and_mixes_with_the_steps() {
+        // SEQUENCE (indefinite) { INTEGER 5, SET { BOOLEAN TRUE } }, then NULL
+        let wire: &[u8] = &[
+            0x30, 0x80, 0x02, 0x01, 0x05, 0x31, 0x03, 0x01, 0x01, 0xFF, 0x00, 0x00, 0x05, 0x00,
+        ];
+        let mut reader = open(wire);
+        let mut seen = Vec::new();
+        let tag = match reader.read().unwrap() {
+            Some(Asn1Item::Header(tag)) => tag,
+            other => panic!("{other:?}"),
+        };
+        seen.push(tag.as_bytes().to_vec());
+        assert_eq!(reader.read_len().unwrap(), Asn1Length::Indefinite);
+        match reader.read().unwrap() {
+            Some(Asn1Item::Body(mut body)) => walk_items(&mut body, &mut seen).unwrap(),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(reader.read_header().unwrap().unwrap().as_bytes(), [0x05]);
+        assert!(matches!(
+            reader.read().unwrap(),
+            Some(Asn1Item::Len(Asn1Length::Definite(0)))
+        ));
+        assert!(reader.read().unwrap().is_some());
+        assert!(reader.read().unwrap().is_none());
+
+        let expected: [&[u8]; 6] = [&[0x30], &[0x02], &[0x05], &[0x31], &[0x01], &[0xFF]];
+        assert_eq!(seen, expected);
+    }
+
+    #[test]
+    fn read_closes_the_value_left_in_progress() {
+        let wire: &[u8] = &[0x04, 0x03, b'a', b'b', b'c', 0x02, 0x01, 0x07];
+        let mut reader = open(wire);
+        assert!(matches!(reader.read().unwrap(), Some(Asn1Item::Header(_))));
+        assert!(matches!(reader.read().unwrap(), Some(Asn1Item::Len(_))));
+        assert!(matches!(reader.read().unwrap(), Some(Asn1Item::Body(_))));
+        match reader.read().unwrap() {
+            Some(Asn1Item::Header(tag)) => assert_eq!(tag.as_bytes(), [0x02]),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn bodies_walk_definite_and_indefinite_values_alike() {
+        // SEQUENCE (indefinite) { INTEGER 5, SET { BOOLEAN TRUE } }, then NULL
+        let wire: &[u8] = &[
+            0x30, 0x80, 0x02, 0x01, 0x05, 0x31, 0x03, 0x01, 0x01, 0xFF, 0x00, 0x00, 0x05, 0x00,
+        ];
+        let mut reader = open(wire);
+        let mut seen = Vec::new();
+        while let Some(tag) = reader.read_header().unwrap() {
+            reader.read_len().unwrap();
+            seen.push(tag.as_bytes().to_vec());
+            if tag.is_constructed() {
+                walk(&mut reader.read_body().unwrap(), &mut seen).unwrap();
+            }
+        }
+        let expected: [&[u8]; 7] = [
+            &[0x30],
+            &[0x02],
+            &[0x05],
+            &[0x31],
+            &[0x01],
+            &[0xFF],
+            &[0x05],
+        ];
+        assert_eq!(seen, expected);
+    }
+
+    #[test]
+    fn the_next_read_skips_what_was_left_unread() {
+        // SEQUENCE (indefinite) { SEQUENCE (indefinite) { OCTET STRING "abc" } INTEGER 1 }, then INTEGER 9
+        let wire: &[u8] = &[
+            0x30, 0x80, 0x30, 0x80, 0x04, 0x03, b'a', b'b', b'c', 0x00, 0x00, 0x02, 0x01, 0x01,
+            0x00, 0x00, 0x02, 0x01, 0x09,
+        ];
+        // Only its header read
+        let mut reader = open(wire);
+        reader.read_header().unwrap();
+        assert_eq!(
+            reader.read_value::<Asn1Integer>().unwrap(),
+            Some(Asn1Integer::from(9))
+        );
+
+        // Never opened
+        let mut reader = open(wire);
+        reader.read_header().unwrap();
+        reader.read_len().unwrap();
+        assert_eq!(
+            reader.read_value::<Asn1Integer>().unwrap(),
+            Some(Asn1Integer::from(9))
+        );
+
+        // Left in the middle of an inner value
+        let mut reader = super::Asn1Reader::new(wire, DecodingOptions::default());
+        reader.read_header().unwrap();
+        reader.read_len().unwrap();
+        {
+            let mut outer = reader.read_body().unwrap();
+            outer.read_header().unwrap();
+            outer.read_len().unwrap();
+            let mut inner = outer.read_body().unwrap();
+            inner.read_header().unwrap();
+            inner.read_len().unwrap();
+            let mut octet = [0u8; 1];
+            inner.read_body().unwrap().read_exact(&mut octet).unwrap();
+        }
+        assert_eq!(
+            reader.read_value::<Asn1Integer>().unwrap(),
+            Some(Asn1Integer::from(9))
+        );
+    }
+
+    #[test]
+    fn read_inside_a_body_stops_at_its_end() {
+        for wire in [
+            &[0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x02][..],
+            &[0x30, 0x80, 0x02, 0x01, 0x01, 0x02, 0x01, 0x02, 0x00, 0x00],
+        ] {
+            let mut reader = open(wire);
+            reader.read_header().unwrap();
+            reader.read_len().unwrap();
+            let mut integers = Vec::new();
+            {
+                let mut body = reader.read_body().unwrap();
+                while let Some(integer) = body.read_value::<Asn1Integer>().unwrap() {
+                    integers.push(integer);
+                }
+            }
+            assert_eq!(integers, [Asn1Integer::from(1), Asn1Integer::from(2)]);
+            assert!(reader.read_header().unwrap().is_none());
+        }
+    }
+
+    #[test]
+    fn a_constructed_body_of_definite_length_reads_as_octets_too() {
+        let wire: &[u8] = &[0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x02, 0x05, 0x00];
+        let mut reader = open(wire);
+        reader.read_header().unwrap();
+        reader.read_len().unwrap();
+        let mut contents = Vec::new();
+        reader
+            .read_body()
+            .unwrap()
+            .read_to_end(&mut contents)
+            .unwrap();
+        assert_eq!(contents, &wire[2..8]);
+
+        let mut reader =
+            super::Asn1Reader::new(&[0x30, 0x80, 0x00, 0x00][..], DecodingOptions::default());
+        reader.read_header().unwrap();
+        reader.read_len().unwrap();
+        let error = reader
+            .read_body()
+            .unwrap()
+            .read_to_end(&mut Vec::new())
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn calls_out_of_order_are_refused_without_reading() {
+        let wire: &[u8] = &[0x30, 0x03, 0x02, 0x01, 0x01];
+        let mut reader = open(wire);
+        let refused = |result: io::Result<()>| {
+            assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidInput);
+        };
+        refused(reader.read_len().map(drop));
+        refused(reader.read_body().map(drop));
+        reader.read_header().unwrap();
+        refused(reader.read_body().map(drop));
+        reader.read_len().unwrap();
+        refused(reader.read_len().map(drop));
+        reader.read_body().unwrap();
+        refused(reader.read_body().map(drop));
+        refused(reader.read_len().map(drop));
+        // The next read closes the value
+        assert!(reader.read_header().unwrap().is_none());
+    }
+
+    #[test]
+    fn primitive_contents_are_not_read_as_values() {
+        let mut reader = open(&[0x04, 0x03, 0x02, 0x01, 0x01]);
+        reader.read_header().unwrap();
+        reader.read_len().unwrap();
+        let mut body = reader.read_body().unwrap();
+        assert_eq!(
+            body.read_header().unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+    }
+
+    #[test]
+    fn after_an_error_in_the_input_the_reader_fails_from_then_on() {
+        let mut reader = open(&[0x04, 0xFF, 0x02, 0x01, 0x05]);
+        reader.read_header().unwrap();
+        assert_eq!(
+            error_of(reader.read_len().unwrap_err()),
+            Asn1Error::MalformedValue
+        );
+        assert_eq!(
+            error_of(reader.read_header().unwrap_err()),
+            Asn1Error::MalformedValue
+        );
+        assert_eq!(
+            error_of(reader.read_value::<Asn1Integer>().unwrap_err()),
+            Asn1Error::MalformedValue
+        );
+    }
+
+    #[test]
+    fn a_value_of_another_type_is_invalid_data_and_the_next_value_still_reads() {
+        let wire: &[u8] = &[0x01, 0x01, 0xFF, 0x02, 0x01, 0x07];
+        let mut reader = open(wire);
+        assert_eq!(
+            error_of(reader.read_value::<Asn1Integer>().unwrap_err()),
+            Asn1Error::UnexpectedTag
+        );
+        assert_eq!(
+            reader.read_value::<Asn1Integer>().unwrap(),
+            Some(Asn1Integer::from(7))
+        );
+    }
+
+    #[test]
+    fn a_value_reaching_past_the_one_around_it_is_malformed() {
+        let wire: &[u8] = &[0x30, 0x03, 0x04, 0x05, 1, 2, 3, 4, 5];
+        let mut reader = open(wire);
+        reader.read_header().unwrap();
+        reader.read_len().unwrap();
+        let mut body = reader.read_body().unwrap();
+        body.read_header().unwrap();
+        assert_eq!(
+            error_of(body.read_len().unwrap_err()),
+            Asn1Error::MalformedValue
+        );
+
+        let mut reader = super::Asn1Reader::new(wire, DecodingOptions::default());
+        reader.read_header().unwrap();
+        reader.read_len().unwrap();
+        let mut body = reader.read_body().unwrap();
+        assert_eq!(
+            error_of(body.read_value::<Asn1OctetString>().unwrap_err()),
+            Asn1Error::MalformedValue
+        );
+    }
+
+    #[test]
+    fn end_of_contents_outside_an_indefinite_length_is_malformed() {
+        let mut reader = open(&[0x00, 0x00]);
+        assert_eq!(
+            error_of(reader.read_header().unwrap_err()),
+            Asn1Error::MalformedValue
+        );
+
+        let mut reader = open(&[0x30, 0x02, 0x00, 0x00]);
+        reader.read_header().unwrap();
+        reader.read_len().unwrap();
+        assert_eq!(
+            error_of(reader.read_body().unwrap().read_header().unwrap_err()),
+            Asn1Error::MalformedValue
+        );
+    }
+
+    #[test]
     fn an_indefinite_length_is_followed_to_its_end_of_contents() {
         // SEQUENCE (indefinite) { [0] (indefinite) { INTEGER 1 } INTEGER 2 }, then INTEGER 3
         let wire: &[u8] = &[
             0x30, 0x80, 0xA0, 0x80, 0x02, 0x01, 0x01, 0x00, 0x00, 0x02, 0x01, 0x02, 0x00, 0x00,
             0x02, 0x01, 0x03,
         ];
-        let mut reader = Asn1Reader::new(wire, DecodingOptions::default());
-        let sequence = reader.read_value::<crate::Asn1Any>().unwrap().unwrap();
+        let mut reader = open(wire);
+        let sequence = reader.read_value::<Asn1Any>().unwrap().unwrap();
         assert_eq!(
             crate::Encode::encode_to_vec(&sequence, &EncodingOptions::BER).unwrap(),
             &wire[..14]
@@ -490,10 +1318,15 @@ mod tests {
             &[0x02, 0x02, 0x01],
             &[0x30, 0x80, 0x02, 0x01, 0x01],
         ] {
-            let mut reader = Asn1Reader::new(wire, DecodingOptions::default());
-            let error = reader.read_value::<crate::Asn1Any>().unwrap_err();
+            let error = open(wire).read_value::<Asn1Any>().unwrap_err();
             assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof, "{wire:02X?}");
         }
+
+        let mut reader = open(&[0x30, 0x05, 0x02, 0x01, 0x01]);
+        reader.read_header().unwrap();
+        reader.read_len().unwrap();
+        let error = reader.read_header().unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
     }
 
     #[test]
@@ -515,7 +1348,7 @@ mod tests {
         wire.extend_from_slice(&[0x00, 0x00]);
         let mut reader = Asn1Reader::new(&wire[..], options);
         assert_eq!(
-            error_of(reader.read_value::<crate::Asn1Any>().unwrap_err()),
+            error_of(reader.read_value::<Asn1Any>().unwrap_err()),
             Asn1Error::ContentLengthExceeded
         );
     }
@@ -523,62 +1356,39 @@ mod tests {
     #[test]
     fn nesting_past_the_depth_limit_is_refused() {
         let options = DecodingOptions::new(3, 1024, 1024);
-        let mut wire = Vec::new();
-        for _ in 0..5 {
-            wire.extend_from_slice(&[0x30, 0x80]);
-        }
-        let mut reader = Asn1Reader::new(&wire[..], options);
+        let wire = [0x30, 0x80].repeat(5);
+        let mut reader = Asn1Reader::new(&wire[..], options.clone());
         assert_eq!(
-            error_of(reader.read_value::<crate::Asn1Any>().unwrap_err()),
+            error_of(reader.read_value::<Asn1Any>().unwrap_err()),
             Asn1Error::DepthExceeded
         );
+
+        let mut reader = Asn1Reader::new(&wire[..], options);
+        let error = (|| -> io::Result<()> {
+            reader.read_header()?;
+            reader.read_len()?;
+            let mut body = reader.read_body()?;
+            let mut seen = Vec::new();
+            walk(&mut body, &mut seen)
+        })()
+        .unwrap_err();
+        assert_eq!(error_of(error), Asn1Error::DepthExceeded);
     }
 
     #[test]
     fn a_primitive_value_with_an_indefinite_length_is_malformed() {
-        let mut reader = Asn1Reader::new(&[0x04, 0x80, 0x00, 0x00][..], DecodingOptions::default());
+        let mut reader = open(&[0x04, 0x80, 0x00, 0x00]);
         assert_eq!(
-            error_of(reader.read_value::<crate::Asn1Any>().unwrap_err()),
+            error_of(reader.read_value::<Asn1Any>().unwrap_err()),
             Asn1Error::MalformedValue
         );
-    }
 
-    #[test]
-    fn a_value_of_another_type_is_invalid_data_and_the_next_value_still_reads() {
-        let wire: &[u8] = &[0x01, 0x01, 0xFF, 0x02, 0x01, 0x07];
-        let mut reader = Asn1Reader::new(wire, DecodingOptions::default());
+        let mut reader = open(&[0x04, 0x80, 0x00, 0x00]);
+        reader.read_header().unwrap();
         assert_eq!(
-            error_of(reader.read_value::<Asn1Integer>().unwrap_err()),
-            Asn1Error::UnexpectedTag
+            error_of(reader.read_len().unwrap_err()),
+            Asn1Error::MalformedValue
         );
-        assert_eq!(
-            reader.read_value::<Asn1Integer>().unwrap(),
-            Some(Asn1Integer::from(7))
-        );
-    }
-
-    #[test]
-    fn a_header_is_read_without_its_contents() {
-        // [31] with a high tag number and 256 octets, then SEQUENCE (indefinite)
-        let mut wire = vec![0x9F, 0x1F, 0x82, 0x01, 0x00];
-        wire.extend_from_slice(&[0xAB; 256]);
-        wire.extend_from_slice(&[0x30, 0x80]);
-        let mut reader = Asn1Reader::new(&wire[..], DecodingOptions::default());
-
-        let header = reader.read_header().unwrap().unwrap();
-        assert_eq!(header.tag().as_bytes(), [0x9F, 0x1F]);
-        assert_eq!(header.tag().class(), Asn1Class::ContextSpecific);
-        assert!(!header.tag().is_constructed());
-        assert_eq!(header.length(), Asn1Length::Definite(256));
-
-        let mut contents = [0u8; 256];
-        io::Read::read_exact(reader.get_mut(), &mut contents).unwrap();
-        assert_eq!(contents, [0xAB; 256]);
-
-        let header = reader.read_header().unwrap().unwrap();
-        assert!(header.tag().is_constructed());
-        assert_eq!(header.length(), Asn1Length::Indefinite);
-        assert!(reader.read_header().unwrap().is_none());
     }
 
     #[test]
@@ -586,7 +1396,7 @@ mod tests {
         let wire: &[u8] = &[
             0x30, 0x80, 0x02, 0x01, 0x05, 0x00, 0x00, b't', b'a', b'i', b'l',
         ];
-        let mut reader = Asn1Reader::new(wire, DecodingOptions::default());
+        let mut reader = open(wire);
         reader.read_object().unwrap().unwrap();
         assert_eq!(reader.into_inner(), b"tail");
     }
@@ -594,7 +1404,7 @@ mod tests {
     #[test]
     fn read_object_gives_the_tree_of_a_value_of_unknown_type() {
         let wire: &[u8] = &[0x30, 0x06, 0x02, 0x01, 0x01, 0x01, 0x01, 0xFF];
-        let mut reader = Asn1Reader::new(wire, DecodingOptions::default());
+        let mut reader = open(wire);
         let object = reader.read_object().unwrap().unwrap();
         assert_eq!(
             crate::Encode::encode_to_vec(&object, &EncodingOptions::DER).unwrap(),
@@ -607,9 +1417,8 @@ mod tests {
     fn identifier_octets_without_end_are_refused() {
         let mut wire = vec![0x1F];
         wire.extend_from_slice(&[0x81; 32]);
-        let mut reader = Asn1Reader::new(&wire[..], DecodingOptions::default());
         assert_eq!(
-            error_of(reader.read_header().unwrap_err()),
+            error_of(open(&wire).read_header().unwrap_err()),
             Asn1Error::MalformedValue
         );
     }
@@ -619,142 +1428,18 @@ mod tests {
         for (wire, expected) in [
             (&[0x1F, 0x80, 0x01, 0x00][..], Asn1Error::NonMinimalTag),
             (&[0x1F, 0x05, 0x00], Asn1Error::NonMinimalTag),
-            (&[0x04, 0xFF], Asn1Error::MalformedValue),
         ] {
-            let mut reader = Asn1Reader::new(wire, DecodingOptions::default());
             assert_eq!(
-                error_of(reader.read_header().unwrap_err()),
+                error_of(open(wire).read_header().unwrap_err()),
                 expected,
                 "{wire:02X?}"
             );
         }
-    }
-
-    fn events(wire: &[u8], options: DecodingOptions) -> io::Result<Vec<Asn1Event>> {
-        let mut reader = Asn1Reader::new(wire, options);
-        let mut events = Vec::new();
-        while let Some(event) = reader.read()? {
-            events.push(event);
-        }
-        Ok(events)
-    }
-
-    fn start_of(event: &Asn1Event) -> (&[u8], Asn1Length) {
-        match event {
-            Asn1Event::Start(header) | Asn1Event::Primitive(header) => {
-                (header.tag().as_bytes(), header.length())
-            }
-            Asn1Event::End => panic!("End has no header"),
-        }
-    }
-
-    #[test]
-    fn read_walks_definite_and_indefinite_values_in_order() {
-        // SEQUENCE (indefinite) { INTEGER 5, SET { BOOLEAN TRUE } }, then NULL
-        let wire: &[u8] = &[
-            0x30, 0x80, 0x02, 0x01, 0x05, 0x31, 0x03, 0x01, 0x01, 0xFF, 0x00, 0x00, 0x05, 0x00,
-        ];
-        let events = events(wire, DecodingOptions::default()).unwrap();
-        assert_eq!(events.len(), 7);
-        assert!(matches!(events[0], Asn1Event::Start(_)));
-        assert_eq!(start_of(&events[0]), (&[0x30][..], Asn1Length::Indefinite));
-        assert!(matches!(events[1], Asn1Event::Primitive(_)));
-        assert_eq!(start_of(&events[1]), (&[0x02][..], Asn1Length::Definite(1)));
-        assert_eq!(start_of(&events[2]), (&[0x31][..], Asn1Length::Definite(3)));
-        assert_eq!(start_of(&events[3]), (&[0x01][..], Asn1Length::Definite(1)));
-        assert_eq!(events[4], Asn1Event::End);
-        assert_eq!(events[5], Asn1Event::End);
-        assert_eq!(start_of(&events[6]), (&[0x05][..], Asn1Length::Definite(0)));
-    }
-
-    #[test]
-    fn a_body_streams_its_contents_and_what_is_left_is_skipped() {
-        let wire: &[u8] = &[0x04, 0x05, b'h', b'e', b'l', b'l', b'o', 0x02, 0x01, 0x07];
-        let mut reader = Asn1Reader::new(wire, DecodingOptions::default());
-        assert!(matches!(
-            reader.read().unwrap(),
-            Some(Asn1Event::Primitive(_))
-        ));
-        let mut start = [0u8; 2];
-        io::Read::read_exact(&mut reader.body(), &mut start).unwrap();
-        assert_eq!(&start, b"he");
+        let mut high = open(&[0x9F, 0x1F, 0x82, 0x01, 0x00]);
         assert_eq!(
-            reader.read_value::<Asn1Integer>().unwrap(),
-            Some(Asn1Integer::from(7))
+            high.read_header().unwrap().unwrap().as_bytes(),
+            [0x9F, 0x1F]
         );
-
-        let mut reader = Asn1Reader::new(wire, DecodingOptions::default());
-        reader.read().unwrap();
-        let mut whole = Vec::new();
-        io::Read::read_to_end(&mut reader.body(), &mut whole).unwrap();
-        assert_eq!(whole, b"hello");
-    }
-
-    #[test]
-    fn read_value_inside_a_value_stops_at_its_end_and_read_reports_it() {
-        for wire in [
-            &[0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x02][..],
-            &[0x30, 0x80, 0x02, 0x01, 0x01, 0x02, 0x01, 0x02, 0x00, 0x00],
-        ] {
-            let mut reader = Asn1Reader::new(wire, DecodingOptions::default());
-            assert!(matches!(reader.read().unwrap(), Some(Asn1Event::Start(_))));
-            let mut integers = Vec::new();
-            while let Some(integer) = reader.read_value::<Asn1Integer>().unwrap() {
-                integers.push(integer);
-            }
-            assert_eq!(integers, [Asn1Integer::from(1), Asn1Integer::from(2)]);
-            assert_eq!(reader.read().unwrap(), Some(Asn1Event::End));
-            assert_eq!(reader.read().unwrap(), None);
-        }
-    }
-
-    #[test]
-    fn a_value_reaching_past_the_one_around_it_is_malformed() {
-        let wire: &[u8] = &[0x30, 0x03, 0x04, 0x05, 1, 2, 3, 4, 5];
-        let error = events(wire, DecodingOptions::default()).unwrap_err();
-        assert_eq!(error_of(error), Asn1Error::MalformedValue);
-
-        let mut reader = Asn1Reader::new(wire, DecodingOptions::default());
-        reader.read().unwrap();
-        assert_eq!(
-            error_of(reader.read_value::<Asn1OctetString>().unwrap_err()),
-            Asn1Error::MalformedValue
-        );
-    }
-
-    #[test]
-    fn end_of_contents_outside_an_indefinite_length_is_malformed() {
-        for wire in [&[0x00, 0x00][..], &[0x30, 0x02, 0x00, 0x00]] {
-            let error = events(wire, DecodingOptions::default()).unwrap_err();
-            assert_eq!(error_of(error), Asn1Error::MalformedValue, "{wire:02X?}");
-        }
-    }
-
-    #[test]
-    fn input_ending_inside_an_open_value_is_an_unexpected_end() {
-        for wire in [
-            &[0x30, 0x05, 0x02, 0x01, 0x01][..],
-            &[0x30, 0x80, 0x02, 0x01, 0x01],
-            &[0x04, 0x05, b'h', b'e'],
-        ] {
-            let error = events(wire, DecodingOptions::default()).unwrap_err();
-            assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof, "{wire:02X?}");
-        }
-    }
-
-    #[test]
-    fn read_refuses_nesting_past_the_depth_limit() {
-        let wire = [0x30, 0x80].repeat(5);
-        let error = events(&wire, DecodingOptions::new(3, 1024, 1024)).unwrap_err();
-        assert_eq!(error_of(error), Asn1Error::DepthExceeded);
-    }
-
-    #[test]
-    fn read_header_inside_a_value_opened_by_read_is_refused() {
-        let wire: &[u8] = &[0x30, 0x03, 0x02, 0x01, 0x01];
-        let mut reader = Asn1Reader::new(wire, DecodingOptions::default());
-        reader.read().unwrap();
-        let error = reader.read_header().unwrap_err();
-        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(high.read_len().unwrap(), Asn1Length::Definite(256));
     }
 }

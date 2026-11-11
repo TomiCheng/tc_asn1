@@ -18,27 +18,25 @@ All notable changes to `tc_asn1` are documented in this file.
   created with. An encoding failure is `io::ErrorKind::InvalidData` carrying
   the `Asn1Error`, with nothing written. Each value is encoded in memory and
   then written whole.
-- `io::Asn1Reader`, also behind `std`, after Bouncy Castle's `Asn1InputStream`: it
-  wraps any `std::io::Read` and, with `read_value`, reads values one after
-  another, `None` at the end of the input. Each value is read whole,
-  following an indefinite length to its end-of-contents octets, and decoded as BER. A definite length is
-  checked against `max_content_len` before it is read, the whole value is held
-  to that limit, and nesting to `depth`, so a peer cannot make it allocate
-  without bound. Input ending inside a value is `UnexpectedEof`; a value over
-  a limit or of another type is `InvalidData` carrying the `Asn1Error`.
-  It reads exactly the octets of a value and nothing past them, and memory
-  grows with the octets that arrive, not with the length a peer claims.
-  `read_object` reads a value of unknown type as an `Asn1Object`, and
-  `read_header` reads only the identifier and length octets, as an
-  `io::Asn1Header` of an `io::Asn1Tag` and an `io::Asn1Length`, under the same
-  rules `Asn1Ref::parse` applies.
-- `io::Asn1Reader::read`, after Bouncy Castle's `Asn1StreamParser`: it walks
-  values without reading any of them whole, as `io::Asn1Event`s, the start of
-  a constructed value, a primitive value whose contents `body` streams, and
-  the end of the innermost open one, so a value larger than memory can be
-  read part by part. `read_value` inside a value it opened reads the next child
-  whole and gives `None` at the end of that value. A child reaching past the
-  definite length around it is `MalformedValue`.
+- `io::Asn1Reader`, also behind `std`, after Bouncy Castle's `Asn1InputStream`
+  and `Asn1StreamParser`: it wraps any `std::io::Read` and reads a value in
+  steps, `read_header` for its identifier octets as an `io::Asn1Tag`,
+  `read_len` for its length as an `io::Asn1Length` and `read_body` for its
+  contents, or with `read`, which gives whichever comes next as an
+  `io::Asn1Item`, or whole in one, `read_value::<T>` for a known type and
+  `read_object` for an unknown one. `read_body` gives an
+  `io::Asn1Body` limited to the contents, with the same steps for the values
+  of a constructed value and `std::io::Read` for the octets of a primitive
+  one, so a value larger than memory can be read part by part. The next read
+  of a level closes the value before it, skipping what was left unread. Each level keeps a state machine: a call out
+  of order is `InvalidInput` and reads nothing, and an error in the input
+  fails the reader for good. It reads exactly the octets of a value and
+  nothing past them, under the header rules `Asn1Ref::parse` applies. A value
+  read whole is held to `max_content_len`, checked before its contents are
+  read, memory grows with the octets that arrive rather than with the length
+  a peer claims, and nesting is held to `depth`. Input ending inside a value
+  is `UnexpectedEof`; a value over a limit or of another type is
+  `InvalidData` carrying the `Asn1Error`.
 
 ### Compatibility
 
