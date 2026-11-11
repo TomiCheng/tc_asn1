@@ -1,5 +1,4 @@
-//! Writing encoded values to a `std::io::Write`, after Bouncy Castle's
-//! `Asn1OutputStream` and its generators.
+//! Writing encoded values to a `std::io::Write`.
 
 use alloc::vec::Vec;
 use std::io::{self, Write};
@@ -77,9 +76,8 @@ impl<W: Write> Write for Counting<'_, W> {
     }
 }
 
-/// Writes values to `W` under one set of rules, as Bouncy Castle's
-/// `Asn1OutputStream` and its generators do: a file, a socket or any other
-/// `std::io::Write`.
+/// Writes values to `W` under one set of rules: a file, a socket or any
+/// other `std::io::Write`.
 ///
 /// A value is written whole with [`write_value`](Self::write_value), or in
 /// steps: [`write_header`](Self::write_header) for its identifier octets,
@@ -246,8 +244,7 @@ impl<W: Write> Asn1Writer<W> {
         self.foot_at(0)
     }
 
-    /// Encodes `value` and writes its whole TLV, Bouncy Castle's
-    /// `WriteObject`.
+    /// Encodes `value` and writes its whole TLV.
     ///
     /// An encoding failure is `io::ErrorKind::InvalidData` carrying the
     /// [`Asn1Error`](crate::Asn1Error), with nothing written; a value that

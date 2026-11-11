@@ -92,9 +92,8 @@
 //! - `std`, off by default, adds `Encode::encode_to_writer`, and the `io`
 //!   module with `Asn1Writer` and `Asn1Reader`, which write encoded values to
 //!   a `std::io::Write` and read them from a `std::io::Read` such as a file or
-//!   a socket, after Bouncy Castle's `Asn1OutputStream` and
-//!   `Asn1InputStream`. It adds no dependency,
-//!   only the standard library, so the crate is no longer `no_std` with it.
+//!   a socket. It adds no dependency, only the standard library, so the crate
+//!   is no longer `no_std` with it.
 //!
 //! `Zeroize` is a capability, not a policy: no type here erases itself on
 //! drop, because none of them knows whether it holds a secret. A key

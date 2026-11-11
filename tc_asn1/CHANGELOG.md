@@ -13,8 +13,7 @@ All notable changes to `tc_asn1` are documented in this file.
   `Asn1OctetString` does: it writes its identifier and length octets, then
   its contents straight from the value.
 - An optional `std` feature, off by default, with the `io` module and
-  `io::Asn1Writer`, after Bouncy Castle's `Asn1OutputStream` and its
-  generators: it wraps any `std::io::Write` and writes under the rules it was
+  `io::Asn1Writer`: it wraps any `std::io::Write` and writes under the rules it was
   created with, a value whole with `write_value` or in steps, `write_header`,
   `write_len` and `write_body`, an `io::Asn1BodyWriter` taking the same steps
   for the values of a constructed value and `std::io::Write` for the octets of
@@ -31,8 +30,7 @@ All notable changes to `tc_asn1` are documented in this file.
   or under DER are `InvalidInput` and write nothing. An encoding failure is
   `InvalidData` carrying the `Asn1Error`, with nothing written; a failure of
   the writer underneath fails the writer for good.
-- `io::Asn1Reader`, also behind `std`, after Bouncy Castle's `Asn1InputStream`
-  and `Asn1StreamParser`: it wraps any `std::io::Read` and reads a value in
+- `io::Asn1Reader`, also behind `std`: it wraps any `std::io::Read` and reads a value in
   steps, `read_header` for its identifier octets as an `io::Asn1Tag`,
   `read_len` for its length as an `io::Asn1Length` and `read_body` for its
   contents, or with `read`, which gives whichever comes next as an

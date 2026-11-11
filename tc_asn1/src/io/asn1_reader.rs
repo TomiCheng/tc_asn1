@@ -1,5 +1,4 @@
-//! Reading encoded values from a `std::io::Read`, after Bouncy Castle's
-//! `Asn1InputStream` and `Asn1StreamParser`.
+//! Reading encoded values from a `std::io::Read`.
 
 use alloc::vec::Vec;
 use std::io::{self, Read};
@@ -112,8 +111,7 @@ impl Failure {
     }
 }
 
-/// Reads values from `R`, as Bouncy Castle's `Asn1InputStream` and
-/// `Asn1StreamParser` do: a file, a socket or any other `std::io::Read`.
+/// Reads values from `R`: a file, a socket or any other `std::io::Read`.
 ///
 /// A value is read in steps, [`read_header`](Self::read_header) for its
 /// identifier octets, [`read_len`](Self::read_len) for its length and
@@ -312,8 +310,8 @@ impl<R: Read> Asn1Reader<R> {
         })
     }
 
-    /// Reads the next value whole and decodes it as `T`, Bouncy Castle's
-    /// `ReadObject`; `None` when the input ends before a value starts.
+    /// Reads the next value whole and decodes it as `T`; `None` when the
+    /// input ends before a value starts.
     ///
     /// Input that ends inside the value is `io::ErrorKind::UnexpectedEof`;
     /// a value over the limits is `io::ErrorKind::InvalidData` carrying the
