@@ -3,12 +3,14 @@
 //!
 //! Available with the `std` feature.
 
+mod asn1_event;
 mod asn1_header;
 mod asn1_length;
 mod asn1_reader;
 mod asn1_tag;
 mod asn1_writer;
 
+pub use asn1_event::Asn1Event;
 pub use asn1_header::Asn1Header;
 pub use asn1_length::Asn1Length;
 pub use asn1_reader::Asn1Reader;

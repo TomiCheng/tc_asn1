@@ -19,9 +19,9 @@ All notable changes to `tc_asn1` are documented in this file.
   the `Asn1Error`, with nothing written. Each value is encoded in memory and
   then written whole.
 - `io::Asn1Reader`, also behind `std`, after Bouncy Castle's `Asn1InputStream`: it
-  wraps any `std::io::Read` and reads values one after another, `None` at the
-  end of the input. Each value is read whole, following an indefinite length
-  to its end-of-contents octets, and decoded as BER. A definite length is
+  wraps any `std::io::Read` and, with `read_value`, reads values one after
+  another, `None` at the end of the input. Each value is read whole,
+  following an indefinite length to its end-of-contents octets, and decoded as BER. A definite length is
   checked against `max_content_len` before it is read, the whole value is held
   to that limit, and nesting to `depth`, so a peer cannot make it allocate
   without bound. Input ending inside a value is `UnexpectedEof`; a value over
@@ -32,6 +32,13 @@ All notable changes to `tc_asn1` are documented in this file.
   `read_header` reads only the identifier and length octets, as an
   `io::Asn1Header` of an `io::Asn1Tag` and an `io::Asn1Length`, under the same
   rules `Asn1Ref::parse` applies.
+- `io::Asn1Reader::read`, after Bouncy Castle's `Asn1StreamParser`: it walks
+  values without reading any of them whole, as `io::Asn1Event`s, the start of
+  a constructed value, a primitive value whose contents `body` streams, and
+  the end of the innermost open one, so a value larger than memory can be
+  read part by part. `read_value` inside a value it opened reads the next child
+  whole and gives `None` at the end of that value. A child reaching past the
+  definite length around it is `MalformedValue`.
 
 ### Compatibility
 
