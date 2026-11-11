@@ -999,8 +999,10 @@ mod tests {
     #[test]
     fn what_the_writer_writes_the_reader_reads_back_in_turn() {
         let mut writer = Asn1Writer::new(Vec::new(), EncodingOptions::DER);
-        writer.write(&Asn1Integer::from(300)).unwrap();
-        writer.write(&Asn1OctetString::new(&[7; 200])).unwrap();
+        writer.write_value(&Asn1Integer::from(300)).unwrap();
+        writer
+            .write_value(&Asn1OctetString::new(&[7; 200]))
+            .unwrap();
         let bytes = writer.into_inner();
 
         let mut reader = open(&bytes);

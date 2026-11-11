@@ -229,7 +229,8 @@ with, or what stands in for one.
 | `Asn1Constructed<T>` | A constructed value under any tag holding elements of one type: the mechanism behind SEQUENCE OF, SET OF and `[n] IMPLICIT SEQUENCE OF` |
 | `Asn1Object` | A whole decoded tree, one variant per universal type, for reading and writing without a schema |
 | `NamedOid` | An OID constant with its dotted form and a name, checked when compiled; the building block of an OID table |
-| `io::Asn1Writer` | With `std`: writes values one after another to a `std::io::Write` under one set of rules, after Bouncy Castle's `Asn1OutputStream` |
+| `io::Asn1Writer` | With `std`: writes values to a `std::io::Write` under one set of rules, whole with `write_value` or in steps, `write_header`, `write_len`, `write_body` and `write_foot` for an indefinite length, then `flush`, after Bouncy Castle's `Asn1OutputStream` and its generators |
+| `io::Asn1BodyWriter` | With `std`: the contents of one value being written, with the same steps or as octets through `std::io::Write`, for a value too large to hold |
 | `io::Asn1Reader` | With `std`: reads values from a `std::io::Read` in steps, `read_header`, `read_len` and `read_body` or `read` giving each as an `io::Asn1Item`, or whole with `read_value` and `read_object`, within the decoding limits and nothing past them, after Bouncy Castle's `Asn1InputStream` and `Asn1StreamParser` |
 | `io::Asn1Body` | With `std`: the contents of one value, read with the same steps or as octets through `std::io::Read`, for a value too large to hold |
 | `DecodingContext`, `DecodingOptions` | The state a decoding carries (depth, DER or not) and the limits it is held to (depth, contents length, element count) |

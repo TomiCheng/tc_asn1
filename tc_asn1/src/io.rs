@@ -13,4 +13,4 @@ pub use asn1_item::Asn1Item;
 pub use asn1_length::Asn1Length;
 pub use asn1_reader::{Asn1Body, Asn1Reader};
 pub use asn1_tag::Asn1Tag;
-pub use asn1_writer::Asn1Writer;
+pub use asn1_writer::{Asn1BodyWriter, Asn1Writer};

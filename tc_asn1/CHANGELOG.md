@@ -13,11 +13,20 @@ All notable changes to `tc_asn1` are documented in this file.
   `Asn1OctetString` does: it writes its identifier and length octets, then
   its contents straight from the value.
 - An optional `std` feature, off by default, with the `io` module and
-  `io::Asn1Writer`, after Bouncy Castle's `Asn1OutputStream`: it wraps any `std::io::Write`, such as a file
-  or a socket, and writes values one after another under the rules it was
-  created with. An encoding failure is `io::ErrorKind::InvalidData` carrying
-  the `Asn1Error`, with nothing written. Each value is encoded in memory and
-  then written whole.
+  `io::Asn1Writer`, after Bouncy Castle's `Asn1OutputStream` and its
+  generators: it wraps any `std::io::Write` and writes under the rules it was
+  created with, a value whole with `write_value` or in steps, `write_header`,
+  `write_len` and `write_body`, an `io::Asn1BodyWriter` taking the same steps
+  for the values of a constructed value and `std::io::Write` for the octets of
+  a primitive one or octets encoded beforehand, so a value larger than memory
+  can be written part by part. A definite length closes its value once the
+  contents are written, an indefinite one closes with `write_foot`, and
+  `flush` comes last, checking that every value is closed. Each level keeps a
+  state machine: a call out of order, contents past a length, identifier
+  octets that are not one tag, and an indefinite length on a primitive value
+  or under DER are `InvalidInput` and write nothing. An encoding failure is
+  `InvalidData` carrying the `Asn1Error`, with nothing written; a failure of
+  the writer underneath fails the writer for good.
 - `io::Asn1Reader`, also behind `std`, after Bouncy Castle's `Asn1InputStream`
   and `Asn1StreamParser`: it wraps any `std::io::Read` and reads a value in
   steps, `read_header` for its identifier octets as an `io::Asn1Tag`,
