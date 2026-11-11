@@ -122,9 +122,13 @@ jobs:
       - run: cargo check --locked --target wasm32-unknown-unknown
       - run: cargo check --locked --target aarch64-unknown-none
       - run: cargo check --locked -p tc_asn1 --all-features --target wasm32-unknown-unknown
-      - run: cargo check --locked -p tc_asn1 --all-features --target aarch64-unknown-none
+      # aarch64-unknown-none has no standard library, so std is left out there.
+      - run: cargo check --locked -p tc_asn1 --features zeroize,chrono --target aarch64-unknown-none
       - run: cargo check --locked -p tc_asn1_x509 --all-features --target wasm32-unknown-unknown
       - run: cargo check --locked -p tc_asn1_x509 --all-features --target aarch64-unknown-none
+      - name: Check the std feature adds no dependency
+        run: |
+          test "$(cargo tree --locked -p tc_asn1 --features std --target wasm32-unknown-unknown --edges normal --prefix none | wc -l)" -eq 1
       - name: Check dependency-free build
         run: |
           test "$(cargo tree --locked -p tc_asn1 --target aarch64-unknown-none --edges normal --prefix none | wc -l)" -eq 1

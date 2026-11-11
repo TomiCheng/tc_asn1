@@ -517,7 +517,7 @@ pub(crate) fn parse_tag(buff: &[u8]) -> Result<&[u8], Asn1Error> {
     Err(Asn1Error::Truncated)
 }
 
-fn parse_len(buff: &[u8]) -> Result<(usize, Option<usize>), Asn1Error> {
+pub(crate) fn parse_len(buff: &[u8]) -> Result<(usize, Option<usize>), Asn1Error> {
     let (first, rest) = buff.split_first().ok_or(Asn1Error::Truncated)?;
     match *first {
         0x00..=0x7F => Ok((1, Some(usize::from(*first)))),
