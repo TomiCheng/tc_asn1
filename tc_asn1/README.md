@@ -20,9 +20,9 @@ The second use is looking at an encoding whose schema you do not have, or
 have not written yet: decode any BER into a tree and dump it, or walk the
 elements one level at a time.
 
-The crate is `no_std` + `alloc`, has no macros and no I/O, has no
-dependencies unless an optional feature is on, and knows nothing of any
-protocol.
+The crate is `no_std` + `alloc`, has no macros, does no I/O unless the
+`std` feature is on, has no dependencies unless an optional feature is on,
+and knows nothing of any protocol.
 
 ## Usage
 
@@ -297,7 +297,7 @@ into `:59`, and rejects a year outside the type's range.
 `std` (off by default) adds the `io` module, `Asn1Writer` and `Asn1Reader`,
 which write encoded values to a `std::io::Write` and read them from a
 `std::io::Read`, such as a file or a socket. It adds no dependency, only the
-standard library.
+standard library. [IO.md](IO.md) shows how to use it.
 
 ## License
 
