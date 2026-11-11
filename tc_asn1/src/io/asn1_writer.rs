@@ -6,12 +6,20 @@ use std::io::{self, Write};
 
 use super::Asn1Length;
 use crate::asn1_ref::parse_tag;
-use crate::traits::encode::write_len;
+use crate::traits::encode::{len_octets, write_len};
 use crate::{Encode, EncodingOptions, EncodingType};
 
 // A call the state of its level does not allow; nothing is written for it
 fn misuse(message: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, message)
+}
+
+// Identifier octets that are one valid tag, end-of-contents aside
+fn check_tag(tag: &[u8]) -> io::Result<()> {
+    if tag == [0x00] || !parse_tag(tag).is_ok_and(|parsed| parsed.len() == tag.len()) {
+        return Err(misuse("identifier octets that are not one valid tag"));
+    }
+    Ok(())
 }
 
 // Where the contents of a level end
@@ -34,8 +42,6 @@ enum Step {
 #[derive(Clone, Copy, Debug)]
 struct Level {
     end: End,
-    // Contents that are octets rather than values
-    primitive: bool,
     step: Step,
     // The value whose header this level has written
     constructed: bool,
@@ -43,10 +49,9 @@ struct Level {
 }
 
 impl Level {
-    fn new(end: End, primitive: bool) -> Self {
+    fn new(end: End) -> Self {
         Self {
             end,
-            primitive,
             step: Step::Header,
             constructed: false,
             value_end: End::Output,
@@ -80,8 +85,12 @@ impl<W: Write> Write for Counting<'_, W> {
 /// steps: [`write_header`](Self::write_header) for its identifier octets,
 /// [`write_len`](Self::write_len) for its length and
 /// [`write_body`](Self::write_body) for its contents, an [`Asn1BodyWriter`]
-/// that takes the same steps for the values of a constructed value and
-/// octets through `std::io::Write` for a primitive one. A definite length
+/// that takes the same steps for the values of a constructed value, or of
+/// the encoding a primitive one such as an OCTET STRING carries, and octets
+/// through `std::io::Write`. The helpers from
+/// [`write_sequence`](Self::write_sequence) to
+/// [`write_bit_string`](Self::write_bit_string) take the three steps of
+/// one value at once. A definite length
 /// closes the value once its contents are written; an indefinite one is
 /// closed with [`write_foot`](Self::write_foot). Writing in steps lets a
 /// value larger than memory be written part by part. [`flush`](Self::flush)
@@ -129,7 +138,7 @@ impl<W: Write> Asn1Writer<W> {
             inner,
             options,
             position: 0,
-            levels: alloc::vec![Level::new(End::Output, false)],
+            levels: alloc::vec![Level::new(End::Output)],
             failed: None,
         }
     }
@@ -183,8 +192,9 @@ impl<W: Write> Asn1Writer<W> {
 
     /// The contents of the value whose length was just written, as an
     /// [`Asn1BodyWriter`] that cannot write past them: values written with
-    /// the same steps when it is constructed, octets written through
-    /// `std::io::Write` when it is primitive. Called again before the value
+    /// the same steps, those of a constructed value or of an encoding a
+    /// primitive one carries, or octets written through `std::io::Write`.
+    /// Called again before the value
     /// is closed, it goes on where the last body stopped.
     ///
     /// Before [`write_len`](Self::write_len) it is
@@ -268,6 +278,124 @@ impl<W: Write> Asn1Writer<W> {
         self.value_at(0, value)
     }
 
+    /// Writes the header and length of a SEQUENCE and gives its body;
+    /// [`write_constructed`](Self::write_constructed) with `30`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use tc_asn1::io::{Asn1Length, Asn1Writer};
+    /// use tc_asn1::{Asn1Integer, EncodingOptions};
+    ///
+    /// let mut writer = Asn1Writer::new(Vec::new(), EncodingOptions::DER);
+    /// {
+    ///     let mut serials = writer.write_sequence(Asn1Length::Definite(6))?;
+    ///     serials.write_value(&Asn1Integer::from(1))?;
+    ///     serials.write_value(&Asn1Integer::from(2))?;
+    /// }
+    /// writer.flush()?;
+    /// assert_eq!(
+    ///     writer.into_inner(),
+    ///     [0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x02]
+    /// );
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn write_sequence(&mut self, length: Asn1Length) -> io::Result<Asn1BodyWriter<'_, W>> {
+        self.write_constructed(&[0x30], length)
+    }
+
+    /// Writes the header and length of a SET and gives its body;
+    /// [`write_constructed`](Self::write_constructed) with `31`. Under DER
+    /// the values of a SET OF are written in the order of their encodings,
+    /// which this does not check.
+    pub fn write_set(&mut self, length: Asn1Length) -> io::Result<Asn1BodyWriter<'_, W>> {
+        self.write_constructed(&[0x31], length)
+    }
+
+    /// Writes the constructed identifier octets `tag`, such as `A0` for
+    /// `[0] EXPLICIT`, and `length`, and gives the body.
+    ///
+    /// A `tag` that is not constructed, and every refusal of
+    /// [`write_header`](Self::write_header) and
+    /// [`write_len`](Self::write_len), is `io::ErrorKind::InvalidInput` with
+    /// nothing written: the whole header is checked before any of it. An
+    /// indefinite length is closed with [`write_foot`](Self::write_foot).
+    /// Variable time, for public values only.
+    pub fn write_constructed(
+        &mut self,
+        tag: &[u8],
+        length: Asn1Length,
+    ) -> io::Result<Asn1BodyWriter<'_, W>> {
+        if tag.first().is_none_or(|first| first & 0x20 == 0) {
+            return Err(misuse(
+                "write_constructed with identifier octets not constructed",
+            ));
+        }
+        self.open_tagged(0, tag, length)?;
+        Ok(Asn1BodyWriter {
+            writer: self,
+            level: 1,
+        })
+    }
+
+    /// Writes the header and length of a primitive OCTET STRING of `len`
+    /// octets and gives its body, for octets through `std::io::Write` or for
+    /// the values of an encoding it carries, as the value of an X.509
+    /// extension does. Refusals as
+    /// [`write_constructed`](Self::write_constructed). Variable time, for
+    /// public values only.
+    pub fn write_octet(&mut self, len: usize) -> io::Result<Asn1BodyWriter<'_, W>> {
+        self.open_tagged(0, &[0x04], Asn1Length::Definite(len))?;
+        Ok(Asn1BodyWriter {
+            writer: self,
+            level: 1,
+        })
+    }
+
+    /// Writes the header and length of a primitive BIT STRING of `len`
+    /// octets of bits and its count of `unused` bits in the last one, and
+    /// gives the body for those octets, through `std::io::Write` or as the
+    /// values of an encoding they carry, as the public key of a certificate
+    /// does. The length written counts the octet of unused bits too.
+    ///
+    /// A count over 7, or a count other than 0 with no octets, is
+    /// `io::ErrorKind::InvalidInput`; other refusals as
+    /// [`write_constructed`](Self::write_constructed); nothing is written
+    /// for any of them. Variable time, for public values only.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use tc_asn1::io::{Asn1Length, Asn1Writer};
+    /// use tc_asn1::{Asn1Integer, EncodingOptions};
+    ///
+    /// // The RSAPublicKey { 5, 3 } a subjectPublicKey carries
+    /// let mut writer = Asn1Writer::new(Vec::new(), EncodingOptions::DER);
+    /// {
+    ///     let mut key = writer.write_bit_string(0, 8)?;
+    ///     let mut rsa = key.write_sequence(Asn1Length::Definite(6))?;
+    ///     rsa.write_value(&Asn1Integer::from(5))?;
+    ///     rsa.write_value(&Asn1Integer::from(3))?;
+    /// }
+    /// writer.flush()?;
+    /// assert_eq!(
+    ///     writer.into_inner(),
+    ///     [0x03, 0x09, 0x00, 0x30, 0x06, 0x02, 0x01, 0x05, 0x02, 0x01, 0x03]
+    /// );
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn write_bit_string(
+        &mut self,
+        unused: u8,
+        len: usize,
+    ) -> io::Result<Asn1BodyWriter<'_, W>> {
+        self.open_bits(0, unused, len)?;
+        Ok(Asn1BodyWriter {
+            writer: self,
+            level: 1,
+        })
+    }
+
     /// Checks that every value is closed, then flushes the writer
     /// underneath; the last call of a writing. A value not finished is
     /// `io::ErrorKind::InvalidInput`. To push out what is written while a
@@ -343,11 +471,6 @@ impl<W: Write> Asn1Writer<W> {
 
     // The level `level` ready for its next value
     fn ready(&mut self, level: usize) -> io::Result<()> {
-        if self.levels[level].primitive {
-            return Err(misuse(
-                "the contents of a primitive value are octets, written through io::Write",
-            ));
-        }
         self.settle(level);
         match self.levels[level] {
             Level {
@@ -389,12 +512,48 @@ impl<W: Write> Asn1Writer<W> {
         Ok(())
     }
 
+    // Writes the header and length of a value and opens its body, checking
+    // all of them before writing any
+    fn open_tagged(&mut self, level: usize, tag: &[u8], length: Asn1Length) -> io::Result<()> {
+        self.guarded(|writer| {
+            writer.ready(level)?;
+            check_tag(tag)?;
+            let total = match length {
+                Asn1Length::Definite(len) => tag.len() as u64 + len_octets(len) as u64 + len as u64,
+                Asn1Length::Indefinite => {
+                    if tag[0] & 0x20 == 0 {
+                        return Err(misuse("an indefinite length on a primitive value"));
+                    }
+                    if matches!(writer.options.encoding_type(), EncodingType::Der) {
+                        return Err(misuse("an indefinite length under DER"));
+                    }
+                    tag.len() as u64 + 3
+                }
+            };
+            writer.check_room(total)
+        })?;
+        self.header_at(level, tag)?;
+        self.len_at(level, length)?;
+        self.body_at(level)
+    }
+
+    // open_tagged for a BIT STRING, writing its count of unused bits
+    fn open_bits(&mut self, level: usize, unused: u8, len: usize) -> io::Result<()> {
+        if unused > 7 || (len == 0 && unused != 0) {
+            return Err(misuse("a count of unused bits over 7, or with no octets"));
+        }
+        let contents = len
+            .checked_add(1)
+            .ok_or_else(|| misuse("a BIT STRING longer than a length can state"))?;
+        self.open_tagged(level, &[0x03], Asn1Length::Definite(contents))?;
+        self.raw_at(level + 1, &[unused])?;
+        Ok(())
+    }
+
     fn header_at(&mut self, level: usize, tag: &[u8]) -> io::Result<()> {
         self.guarded(|writer| {
             writer.ready(level)?;
-            if tag == [0x00] || !parse_tag(tag).is_ok_and(|parsed| parsed.len() == tag.len()) {
-                return Err(misuse("identifier octets that are not one valid tag"));
-            }
+            check_tag(tag)?;
             writer.check_room(tag.len() as u64)?;
             writer.put(tag)?;
             let current = &mut writer.levels[level];
@@ -407,7 +566,7 @@ impl<W: Write> Asn1Writer<W> {
     fn len_at(&mut self, level: usize, length: Asn1Length) -> io::Result<()> {
         self.guarded(|writer| {
             let current = writer.levels[level];
-            if current.primitive || current.step != Step::Len {
+            if current.step != Step::Len {
                 return Err(misuse("write_len right after write_header"));
             }
             let mut octets = [0u8; 1 + core::mem::size_of::<usize>()];
@@ -441,13 +600,11 @@ impl<W: Write> Asn1Writer<W> {
     fn body_at(&mut self, level: usize) -> io::Result<()> {
         self.guarded(|writer| {
             let current = writer.levels[level];
-            if current.primitive || current.step != Step::Body {
+            if current.step != Step::Body {
                 return Err(misuse("write_body after write_len"));
             }
             if writer.levels.len() == level + 1 {
-                writer
-                    .levels
-                    .push(Level::new(current.value_end, !current.constructed));
+                writer.levels.push(Level::new(current.value_end));
             }
             Ok(())
         })
@@ -456,7 +613,7 @@ impl<W: Write> Asn1Writer<W> {
     fn foot_at(&mut self, level: usize) -> io::Result<()> {
         self.guarded(|writer| {
             let current = writer.levels[level];
-            if current.primitive || current.step != Step::Body || current.value_end != End::Eoc {
+            if current.step != Step::Body || current.value_end != End::Eoc {
                 return Err(misuse(
                     "write_foot on a value of indefinite length after its body",
                 ));
@@ -522,10 +679,13 @@ impl<W: Write> Asn1Writer<W> {
 /// steps as on [`Asn1Writer`]: [`write_value`](Self::write_value), or
 /// [`write_header`](Self::write_header), [`write_len`](Self::write_len),
 /// [`write_body`](Self::write_body) and, for an indefinite length,
-/// [`write_foot`](Self::write_foot). The contents of a primitive value are
-/// octets, written through `std::io::Write`, which also copies octets
-/// encoded beforehand into a constructed value, unchecked, between its
-/// values. While a body is held, the writer it came from cannot be used.
+/// [`write_foot`](Self::write_foot), or with the helpers from
+/// [`write_sequence`](Self::write_sequence) to
+/// [`write_bit_string`](Self::write_bit_string). The contents of a primitive
+/// value that carries an encoding are written the same way. Any contents are
+/// also octets, written through `std::io::Write`, which copies octets encoded
+/// beforehand, unchecked, between values. While a body is held, the writer it
+/// came from cannot be used.
 ///
 /// # Examples
 ///
@@ -585,11 +745,62 @@ impl<W: Write> Asn1BodyWriter<'_, W> {
     pub fn write_value<T: Encode + ?Sized>(&mut self, value: &T) -> io::Result<()> {
         self.writer.value_at(self.level, value)
     }
+
+    /// [`Asn1Writer::write_sequence`] for the values of this body.
+    pub fn write_sequence(&mut self, length: Asn1Length) -> io::Result<Asn1BodyWriter<'_, W>> {
+        self.write_constructed(&[0x30], length)
+    }
+
+    /// [`Asn1Writer::write_set`] for the values of this body.
+    pub fn write_set(&mut self, length: Asn1Length) -> io::Result<Asn1BodyWriter<'_, W>> {
+        self.write_constructed(&[0x31], length)
+    }
+
+    /// [`Asn1Writer::write_constructed`] for the values of this body.
+    pub fn write_constructed(
+        &mut self,
+        tag: &[u8],
+        length: Asn1Length,
+    ) -> io::Result<Asn1BodyWriter<'_, W>> {
+        if tag.first().is_none_or(|first| first & 0x20 == 0) {
+            return Err(misuse(
+                "write_constructed with identifier octets not constructed",
+            ));
+        }
+        self.writer.open_tagged(self.level, tag, length)?;
+        Ok(Asn1BodyWriter {
+            writer: &mut *self.writer,
+            level: self.level + 1,
+        })
+    }
+
+    /// [`Asn1Writer::write_octet`] for the values of this body.
+    pub fn write_octet(&mut self, len: usize) -> io::Result<Asn1BodyWriter<'_, W>> {
+        self.writer
+            .open_tagged(self.level, &[0x04], Asn1Length::Definite(len))?;
+        Ok(Asn1BodyWriter {
+            writer: &mut *self.writer,
+            level: self.level + 1,
+        })
+    }
+
+    /// [`Asn1Writer::write_bit_string`] for the values of this body.
+    pub fn write_bit_string(
+        &mut self,
+        unused: u8,
+        len: usize,
+    ) -> io::Result<Asn1BodyWriter<'_, W>> {
+        self.writer.open_bits(self.level, unused, len)?;
+        Ok(Asn1BodyWriter {
+            writer: &mut *self.writer,
+            level: self.level + 1,
+        })
+    }
 }
 
-/// The octets of the contents, never past their end: those of a primitive
-/// value, or octets encoded beforehand copied into a constructed value,
-/// unchecked, between its values. Octets past the length are
+/// The octets of the contents, never past their end, written between
+/// values and unchecked, such as those of a primitive value or values
+/// encoded beforehand. Octets past the length are
 /// `io::ErrorKind::InvalidInput` and none of them is written. `flush`
 /// flushes the writer underneath without checking that values are closed,
 /// to push out what is written while a value is still open. Variable time,
@@ -823,13 +1034,89 @@ mod tests {
     }
 
     #[test]
-    fn primitive_contents_are_not_written_as_values() {
+    fn primitive_contents_carry_the_values_of_an_encoding() {
         let mut writer = Asn1Writer::new(Vec::new(), EncodingOptions::DER);
-        writer.write_header(&[0x04]).unwrap();
-        writer.write_len(Asn1Length::Definite(3)).unwrap();
-        let mut body = writer.write_body().unwrap();
-        refused(body.write_value(&Asn1Integer::from(1)));
-        refused(body.write_header(&[0x02]));
+        {
+            let mut octets = writer.write_octet(5).unwrap();
+            let mut sequence = octets.write_sequence(Asn1Length::Definite(3)).unwrap();
+            sequence.write_value(&Asn1Integer::from(1)).unwrap();
+        }
+        writer.flush().unwrap();
+        assert_eq!(
+            writer.into_inner(),
+            [0x04, 0x05, 0x30, 0x03, 0x02, 0x01, 0x01]
+        );
+    }
+
+    #[test]
+    fn the_helpers_write_what_the_steps_write_and_the_reader_helpers_read_back() {
+        // SEQUENCE { SET { INTEGER 1 } [0] { OCTET STRING "abc" } BIT STRING 3 unused, AB C8 }
+        let mut writer = Asn1Writer::new(Vec::new(), EncodingOptions::DER);
+        {
+            let mut sequence = writer.write_sequence(Asn1Length::Definite(17)).unwrap();
+            sequence
+                .write_set(Asn1Length::Definite(3))
+                .unwrap()
+                .write_value(&Asn1Integer::from(1))
+                .unwrap();
+            sequence
+                .write_constructed(&[0xA0], Asn1Length::Definite(5))
+                .unwrap()
+                .write_octet(3)
+                .unwrap()
+                .write_all(b"abc")
+                .unwrap();
+            sequence
+                .write_bit_string(3, 2)
+                .unwrap()
+                .write_all(&[0xAB, 0xC8])
+                .unwrap();
+        }
+        writer.flush().unwrap();
+        let bytes = writer.into_inner();
+        assert_eq!(
+            bytes,
+            [
+                0x30, 0x11, 0x31, 0x03, 0x02, 0x01, 0x01, 0xA0, 0x05, 0x04, 0x03, b'a', b'b', b'c',
+                0x03, 0x03, 0x03, 0xAB, 0xC8
+            ]
+        );
+
+        let mut reader = Asn1Reader::new(&bytes[..], DecodingOptions::default());
+        let mut sequence = reader.read_sequence().unwrap().unwrap();
+        sequence.read_set().unwrap().unwrap();
+        sequence.read_constructed(&[0xA0]).unwrap().unwrap();
+        let (unused, mut bits) = sequence.read_bit_string().unwrap().unwrap();
+        let mut octets = Vec::new();
+        bits.read_to_end(&mut octets).unwrap();
+        assert_eq!((unused, octets.as_slice()), (3, &[0xAB, 0xC8][..]));
+    }
+
+    #[test]
+    fn a_helper_refused_writes_nothing() {
+        let mut writer = Asn1Writer::new(Vec::new(), EncodingOptions::DER);
+        refused(
+            writer
+                .write_constructed(&[0x04], Asn1Length::Definite(0))
+                .map(drop),
+        );
+        refused(writer.write_sequence(Asn1Length::Indefinite).map(drop));
+        refused(writer.write_bit_string(8, 1).map(drop));
+        refused(writer.write_bit_string(1, 0).map(drop));
+        {
+            let mut outer = writer.write_sequence(Asn1Length::Definite(4)).unwrap();
+            refused(outer.write_sequence(Asn1Length::Definite(3)).map(drop));
+            refused(outer.write_octet(3).map(drop));
+            outer.write_octet(2).unwrap().write_all(b"ok").unwrap();
+        }
+        writer.flush().unwrap();
+        assert_eq!(writer.into_inner(), [0x30, 0x04, 0x04, 0x02, b'o', b'k']);
+
+        let mut writer = Asn1Writer::new(Vec::new(), EncodingOptions::BER);
+        writer.write_sequence(Asn1Length::Indefinite).unwrap();
+        writer.write_foot().unwrap();
+        writer.flush().unwrap();
+        assert_eq!(writer.into_inner(), [0x30, 0x80, 0x00, 0x00]);
     }
 
     #[test]

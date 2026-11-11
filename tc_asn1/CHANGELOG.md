@@ -19,7 +19,11 @@ All notable changes to `tc_asn1` are documented in this file.
   `write_len` and `write_body`, an `io::Asn1BodyWriter` taking the same steps
   for the values of a constructed value and `std::io::Write` for the octets of
   a primitive one or octets encoded beforehand, so a value larger than memory
-  can be written part by part. A definite length closes its value once the
+  can be written part by part. `write_sequence`, `write_set`,
+  `write_constructed`, `write_octet` and `write_bit_string` take the three
+  steps of one value at once, checking the whole header before writing any
+  of it, and the body of a primitive value takes values too, for the
+  encoding an OCTET STRING or a BIT STRING carries. A definite length closes its value once the
   contents are written, an indefinite one closes with `write_foot`, and
   `flush` comes last, checking that every value is closed. Each level keeps a
   state machine: a call out of order, contents past a length, identifier
