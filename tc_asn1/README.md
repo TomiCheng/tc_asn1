@@ -229,8 +229,8 @@ with, or what stands in for one.
 | `Asn1Constructed<T>` | A constructed value under any tag holding elements of one type: the mechanism behind SEQUENCE OF, SET OF and `[n] IMPLICIT SEQUENCE OF` |
 | `Asn1Object` | A whole decoded tree, one variant per universal type, for reading and writing without a schema |
 | `NamedOid` | An OID constant with its dotted form and a name, checked when compiled; the building block of an OID table |
-| `Asn1Writer` | With `std`: writes values one after another to a `std::io::Write` under one set of rules, after Bouncy Castle's `Asn1OutputStream` |
-| `Asn1Reader` | With `std`: reads values one after another from a `std::io::Read` within the decoding limits, after Bouncy Castle's `Asn1InputStream` |
+| `io::Asn1Writer` | With `std`: writes values one after another to a `std::io::Write` under one set of rules, after Bouncy Castle's `Asn1OutputStream` |
+| `io::Asn1Reader` | With `std`: reads values one after another from a `std::io::Read` within the decoding limits, and nothing past them, after Bouncy Castle's `Asn1InputStream`; `read_header` gives an `io::Asn1Header` alone |
 | `DecodingContext`, `DecodingOptions` | The state a decoding carries (depth, DER or not) and the limits it is held to (depth, contents length, element count) |
 | `EncodingOptions` | The rule set to write: `BER`, `CER`, `DER`, or `new` for indefinite BER |
 
@@ -292,9 +292,9 @@ to and from `chrono::DateTime<Utc>`. Going to chrono is exact, fractional
 seconds included; coming from it truncates to the second, turns a leap second
 into `:59`, and rejects a year outside the type's range.
 
-`std` (off by default) adds `Asn1Writer` and `Asn1Reader`, which write
-encoded values to a `std::io::Write` and read them from a `std::io::Read`, such
-as a file or a socket. It adds no dependency, only the
+`std` (off by default) adds the `io` module, `Asn1Writer` and `Asn1Reader`,
+which write encoded values to a `std::io::Write` and read them from a
+`std::io::Read`, such as a file or a socket. It adds no dependency, only the
 standard library.
 
 ## License

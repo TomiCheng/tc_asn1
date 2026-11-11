@@ -16,7 +16,8 @@ use crate::{Encode, EncodingOptions};
 /// Available with the `std` feature.
 ///
 /// ```
-/// use tc_asn1::{Asn1Boolean, Asn1Integer, Asn1Writer, EncodingOptions};
+/// use tc_asn1::io::Asn1Writer;
+/// use tc_asn1::{Asn1Boolean, Asn1Integer, EncodingOptions};
 ///
 /// let mut writer = Asn1Writer::new(Vec::new(), EncodingOptions::DER);
 /// writer.write(&Asn1Integer::from(5))?;

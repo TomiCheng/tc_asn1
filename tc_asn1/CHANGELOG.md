@@ -12,13 +12,13 @@ All notable changes to `tc_asn1` are documented in this file.
   type that may be large can write its parts as it goes instead.
   `Asn1OctetString` does: it writes its identifier and length octets, then
   its contents straight from the value.
-- An optional `std` feature, off by default, with `Asn1Writer`, after Bouncy
-  Castle's `Asn1OutputStream`: it wraps any `std::io::Write`, such as a file
+- An optional `std` feature, off by default, with the `io` module and
+  `io::Asn1Writer`, after Bouncy Castle's `Asn1OutputStream`: it wraps any `std::io::Write`, such as a file
   or a socket, and writes values one after another under the rules it was
   created with. An encoding failure is `io::ErrorKind::InvalidData` carrying
   the `Asn1Error`, with nothing written. Each value is encoded in memory and
   then written whole.
-- `Asn1Reader`, also behind `std`, after Bouncy Castle's `Asn1InputStream`: it
+- `io::Asn1Reader`, also behind `std`, after Bouncy Castle's `Asn1InputStream`: it
   wraps any `std::io::Read` and reads values one after another, `None` at the
   end of the input. Each value is read whole, following an indefinite length
   to its end-of-contents octets, and decoded as BER. A definite length is
@@ -26,6 +26,12 @@ All notable changes to `tc_asn1` are documented in this file.
   to that limit, and nesting to `depth`, so a peer cannot make it allocate
   without bound. Input ending inside a value is `UnexpectedEof`; a value over
   a limit or of another type is `InvalidData` carrying the `Asn1Error`.
+  It reads exactly the octets of a value and nothing past them, and memory
+  grows with the octets that arrive, not with the length a peer claims.
+  `read_object` reads a value of unknown type as an `Asn1Object`, and
+  `read_header` reads only the identifier and length octets, as an
+  `io::Asn1Header` of an `io::Asn1Tag` and an `io::Asn1Length`, under the same
+  rules `Asn1Ref::parse` applies.
 
 ### Compatibility
 
