@@ -346,7 +346,36 @@ impl<R: Read> Asn1Reader<R> {
     /// # Ok::<(), std::io::Error>(())
     /// ```
     pub fn read_value<T: Decode>(&mut self) -> io::Result<Option<T>> {
-        self.value_at(0)
+        self.value_at(0, false)
+    }
+
+    /// [`read_value`](Self::read_value) under DER, for input that must be
+    /// in the one form X.509 and every signed structure require: any
+    /// encoding that is valid BER but not that form, an indefinite length or
+    /// a length not in its shortest form among them, is `NotDer`, as
+    /// `io::ErrorKind::InvalidData`. The value has been read by then, so the
+    /// next call starts after it. Variable time, for public values only.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use tc_asn1::io::Asn1Reader;
+    /// use tc_asn1::{Asn1Boolean, Asn1Error, DecodingOptions};
+    ///
+    /// // BOOLEAN TRUE written as 01 by BER, then as FF, the one DER form
+    /// let data: &[u8] = &[0x01, 0x01, 0x01, 0x01, 0x01, 0xFF];
+    /// let mut reader = Asn1Reader::new(data, DecodingOptions::default());
+    ///
+    /// let error = reader.read_value_der::<Asn1Boolean>().unwrap_err();
+    /// assert_eq!(
+    ///     error.into_inner().unwrap().downcast_ref::<Asn1Error>(),
+    ///     Some(&Asn1Error::NotDer)
+    /// );
+    /// assert_eq!(reader.read_value_der::<Asn1Boolean>()?, Some(Asn1Boolean::from(true)));
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn read_value_der<T: Decode>(&mut self) -> io::Result<Option<T>> {
+        self.value_at(0, true)
     }
 
     /// Reads the next value whole as an [`Asn1Object`], for input whose
@@ -669,7 +698,7 @@ impl<R: Read> Asn1Reader<R> {
         Ok(())
     }
 
-    fn value_at<T: Decode>(&mut self, level: usize) -> io::Result<Option<T>> {
+    fn value_at<T: Decode>(&mut self, level: usize, der: bool) -> io::Result<Option<T>> {
         let buffer = self.guarded(|reader| {
             reader.expect(level, ALL_STEPS, "")?;
             reader.close(level)?;
@@ -690,7 +719,12 @@ impl<R: Read> Asn1Reader<R> {
         let Some(buffer) = buffer else {
             return Ok(None);
         };
-        let (used, value) = T::decode(&buffer, &self.options).map_err(invalid)?;
+        let decoded = if der {
+            T::decode_der(&buffer, &self.options)
+        } else {
+            T::decode(&buffer, &self.options)
+        };
+        let (used, value) = decoded.map_err(invalid)?;
         if used != buffer.len() {
             return Err(invalid(Asn1Error::TrailingData));
         }
@@ -1104,7 +1138,13 @@ impl<R: Read> Asn1Body<'_, R> {
 
     /// [`Asn1Reader::read_value`] for the values of this body; `None` at its end.
     pub fn read_value<T: Decode>(&mut self) -> io::Result<Option<T>> {
-        self.reader.value_at(self.level)
+        self.reader.value_at(self.level, false)
+    }
+
+    /// [`Asn1Reader::read_value_der`] for the values of this body; `None` at
+    /// its end.
+    pub fn read_value_der<T: Decode>(&mut self) -> io::Result<Option<T>> {
+        self.reader.value_at(self.level, true)
     }
 
     /// [`Asn1Reader::read_object`] for the values of this body; `None` at
@@ -1884,5 +1924,36 @@ mod tests {
             );
         }
         assert!(reader.read_octet().unwrap().is_some());
+    }
+
+    #[test]
+    fn read_value_der_refuses_what_is_not_der_and_the_reader_goes_on() {
+        let wire: &[u8] = &[
+            // SEQUENCE (indefinite) { INTEGER 1 }
+            0x30, 0x80, 0x02, 0x01, 0x01, 0x00, 0x00,
+            // INTEGER 1 with its length in long form
+            0x02, 0x81, 0x01, 0x01, // INTEGER 1
+            0x02, 0x01, 0x01,
+        ];
+        let mut reader = open(wire);
+        assert_eq!(
+            error_of(reader.read_value_der::<Asn1Any>().unwrap_err()),
+            Asn1Error::NotDer
+        );
+        assert_eq!(
+            error_of(reader.read_value_der::<Asn1Integer>().unwrap_err()),
+            Asn1Error::NotDer
+        );
+        assert_eq!(
+            reader.read_value_der::<Asn1Integer>().unwrap(),
+            Some(Asn1Integer::from(1))
+        );
+
+        let mut reader = open(&wire[..7]);
+        let mut body = reader.read_sequence().unwrap().unwrap();
+        assert_eq!(
+            body.read_value_der::<Asn1Integer>().unwrap(),
+            Some(Asn1Integer::from(1))
+        );
     }
 }

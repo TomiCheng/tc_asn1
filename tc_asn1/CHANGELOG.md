@@ -32,8 +32,9 @@ All notable changes to `tc_asn1` are documented in this file.
   steps, `read_header` for its identifier octets as an `io::Asn1Tag`,
   `read_len` for its length as an `io::Asn1Length` and `read_body` for its
   contents, or with `read`, which gives whichever comes next as an
-  `io::Asn1Item`, or whole in one, `read_value::<T>` for a known type and
-  `read_object` for an unknown one. `read_sequence`, `read_set`,
+  `io::Asn1Item`, or whole in one, `read_value::<T>` for a known type,
+  `read_value_der::<T>` for one that must be DER, and `read_object` for an
+  unknown one. `read_sequence`, `read_set`,
   `read_constructed`, `read_octet` and `read_bit_string` read the header and
   length of a value that must carry the expected tag and give its body,
   `read_bit_string` with its count of unused bits; another tag is
