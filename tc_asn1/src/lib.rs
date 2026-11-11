@@ -89,6 +89,11 @@
 //!   chrono is exact, fractional seconds included; coming from it truncates
 //!   to the second and turns a leap second into `:59`, and a year outside the
 //!   type's range is `MalformedValue`. It adds `chrono`, without its default features.
+//! - `std`, off by default, adds `Encode::encode_to_writer`, and `Asn1Writer`
+//!   and `Asn1Reader`, which write encoded values to a `std::io::Write` and
+//!   read them from a `std::io::Read` such as a file or a socket, after Bouncy
+//!   Castle's `Asn1OutputStream` and `Asn1InputStream`. It adds no dependency,
+//!   only the standard library, so the crate is no longer `no_std` with it.
 //!
 //! `Zeroize` is a capability, not a policy: no type here erases itself on
 //! drop, because none of them knows whether it holds a secret. A key
@@ -110,11 +115,17 @@
 #![deny(missing_docs)]
 
 extern crate alloc;
+#[cfg(feature = "std")]
+extern crate std;
 
 mod asn1_any;
 mod asn1_constructed;
 mod asn1_object;
+#[cfg(feature = "std")]
+mod asn1_reader;
 mod asn1_ref;
+#[cfg(feature = "std")]
+mod asn1_writer;
 mod decoding;
 mod decoding_context;
 mod decoding_options;
@@ -130,7 +141,11 @@ mod wipe;
 pub use asn1_any::Asn1Any;
 pub use asn1_constructed::Asn1Constructed;
 pub use asn1_object::Asn1Object;
+#[cfg(feature = "std")]
+pub use asn1_reader::Asn1Reader;
 pub use asn1_ref::{Asn1Class, Asn1Ref, Children};
+#[cfg(feature = "std")]
+pub use asn1_writer::Asn1Writer;
 pub use decoding_context::DecodingContext;
 pub use decoding_options::DecodingOptions;
 pub use encoding_options::EncodingOptions;

@@ -18,6 +18,8 @@ default = []
 zeroize = ["dep:tc_zeroize"]
 # Conversions between UTCTime/GeneralizedTime and chrono's DateTime<Utc>.
 chrono = ["dep:chrono"]
+# Asn1Writer over std::io::Write; adds no dependency, only the standard library.
+std = []
 
 [dependencies]
 tc_zeroize = { version = "0.1.0", default-features = false, features = ["alloc"], optional = true }
