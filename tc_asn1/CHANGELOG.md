@@ -33,7 +33,13 @@ All notable changes to `tc_asn1` are documented in this file.
   `read_len` for its length as an `io::Asn1Length` and `read_body` for its
   contents, or with `read`, which gives whichever comes next as an
   `io::Asn1Item`, or whole in one, `read_value::<T>` for a known type and
-  `read_object` for an unknown one. `read_body` gives an
+  `read_object` for an unknown one. `read_sequence`, `read_set`,
+  `read_constructed`, `read_octet` and `read_bit_string` read the header and
+  length of a value that must carry the expected tag and give its body,
+  `read_bit_string` with its count of unused bits; another tag is
+  `UnexpectedTag` and the reader goes on past that value. The body of a
+  primitive value reads as values too, for the encoding an OCTET STRING or a
+  BIT STRING carries. `read_body` gives an
   `io::Asn1Body` limited to the contents, with the same steps for the values
   of a constructed value and `std::io::Read` for the octets of a primitive
   one, so a value larger than memory can be read part by part. The next read

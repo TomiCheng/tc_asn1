@@ -65,8 +65,6 @@ enum Step {
 #[derive(Clone, Copy, Debug)]
 struct Level {
     end: End,
-    // Contents that are octets rather than values
-    primitive: bool,
     step: Step,
     // The value whose header this level is reading
     constructed: bool,
@@ -77,10 +75,9 @@ struct Level {
 }
 
 impl Level {
-    fn new(end: End, primitive: bool, cap: Option<u64>) -> Self {
+    fn new(end: End, cap: Option<u64>) -> Self {
         Self {
             end,
-            primitive,
             cap,
             step: Step::Header,
             constructed: false,
@@ -126,8 +123,9 @@ impl Failure {
 /// [`read_value`](Self::read_value) for a known type and
 /// [`read_object`](Self::read_object) for an unknown one. `read_body` gives
 /// an [`Asn1Body`] limited to the contents, with the same steps for the
-/// values inside a constructed one and `std::io::Read` for the octets of a
-/// primitive one, so a value too large to hold is read part by part. The next
+/// values inside a constructed one, or inside a primitive one that carries
+/// an encoding such as an OCTET STRING, and `std::io::Read` for the octets,
+/// so a value too large to hold is read part by part. The next
 /// read of the same level closes the value before it, skipping what was left
 /// unread of it, so a value need not be read to its end.
 ///
@@ -189,7 +187,7 @@ impl<R: Read> Asn1Reader<R> {
             inner,
             options,
             position: 0,
-            levels: alloc::vec![Level::new(End::Input, false, None)],
+            levels: alloc::vec![Level::new(End::Input, None)],
             failed: None,
         }
     }
@@ -299,8 +297,8 @@ impl<R: Read> Asn1Reader<R> {
 
     /// The contents of the value whose length was just read, as an
     /// [`Asn1Body`] that cannot read past them: values to read with the same
-    /// steps when it is constructed, octets to read through `std::io::Read`
-    /// when it is primitive.
+    /// steps, those of a constructed value or an encoding a primitive one
+    /// carries, or octets to read through `std::io::Read`.
     ///
     /// Nesting past [`DecodingOptions::depth`] is `DepthExceeded`, as
     /// `io::ErrorKind::InvalidData`. Anywhere but right after
@@ -377,6 +375,153 @@ impl<R: Read> Asn1Reader<R> {
         self.read_value::<Asn1Object>()
     }
 
+    /// Reads the header and length of the next value, which must be a
+    /// SEQUENCE, and gives its body; `None` when the input ends before a
+    /// value starts. [`read_constructed`](Self::read_constructed) with
+    /// `30`.
+    ///
+    /// # Examples
+    ///
+    /// A SEQUENCE OF INTEGER, as the serial numbers of a CRL might come,
+    /// taken one entry at a time:
+    ///
+    /// ```
+    /// use tc_asn1::io::Asn1Reader;
+    /// use tc_asn1::{Asn1Integer, DecodingOptions};
+    ///
+    /// let data: &[u8] = &[0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x02];
+    /// let mut reader = Asn1Reader::new(data, DecodingOptions::default());
+    ///
+    /// let mut serials = reader.read_sequence()?.expect("a SEQUENCE");
+    /// while let Some(serial) = serials.read_value::<Asn1Integer>()? {
+    ///     println!("{serial}");
+    /// }
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn read_sequence(&mut self) -> io::Result<Option<Asn1Body<'_, R>>> {
+        self.read_constructed(&[0x30])
+    }
+
+    /// Reads the header and length of the next value, which must be a SET,
+    /// and gives its body; `None` when the input ends before a value starts.
+    /// [`read_constructed`](Self::read_constructed) with `31`.
+    pub fn read_set(&mut self) -> io::Result<Option<Asn1Body<'_, R>>> {
+        self.read_constructed(&[0x31])
+    }
+
+    /// Reads the header and length of the next value, which must carry the
+    /// constructed identifier octets `tag`, such as `A0` for `[0]
+    /// EXPLICIT`, and gives its body of values; `None` when the input ends
+    /// before a value starts.
+    ///
+    /// Other identifier octets are `UnexpectedTag`, as
+    /// `io::ErrorKind::InvalidData`; the header has been read by then, and
+    /// the next read of the level skips the value, so the reader goes on.
+    /// A `tag` that is not constructed is `io::ErrorKind::InvalidInput`.
+    /// Otherwise the errors of [`read_header`](Self::read_header),
+    /// [`read_len`](Self::read_len) and [`read_body`](Self::read_body).
+    /// Variable time, for public values only.
+    pub fn read_constructed(&mut self, tag: &[u8]) -> io::Result<Option<Asn1Body<'_, R>>> {
+        if tag.first().is_none_or(|first| first & 0x20 == 0) {
+            return Err(misuse(
+                "read_constructed with identifier octets not constructed",
+            ));
+        }
+        Ok(if self.open_tagged(0, tag)? {
+            Some(Asn1Body {
+                reader: self,
+                level: 1,
+            })
+        } else {
+            None
+        })
+    }
+
+    /// Reads the header and length of the next value, which must be a
+    /// primitive OCTET STRING, and gives its contents, octets to read through
+    /// `std::io::Read` or, when they carry an encoding as the value of an
+    /// X.509 extension does, values to read with the same steps; `None` when
+    /// the input ends before a value starts.
+    /// The constructed form BER allows is read with
+    /// [`read_constructed`](Self::read_constructed) and `24`. Errors as
+    /// [`read_constructed`](Self::read_constructed). Variable time, for
+    /// public values only.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::io;
+    ///
+    /// use tc_asn1::io::Asn1Reader;
+    /// use tc_asn1::DecodingOptions;
+    ///
+    /// let data: &[u8] = &[0x04, 0x03, b'a', b'b', b'c'];
+    /// let mut reader = Asn1Reader::new(data, DecodingOptions::default());
+    ///
+    /// let mut contents = Vec::new();
+    /// io::copy(&mut reader.read_octet()?.expect("an OCTET STRING"), &mut contents)?;
+    /// assert_eq!(contents, b"abc");
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn read_octet(&mut self) -> io::Result<Option<Asn1Body<'_, R>>> {
+        Ok(if self.open_tagged(0, &[0x04])? {
+            Some(Asn1Body {
+                reader: self,
+                level: 1,
+            })
+        } else {
+            None
+        })
+    }
+
+    /// Reads the header and length of the next value, which must be a
+    /// primitive BIT STRING, and its first contents octet, the count of
+    /// unused bits in the last one, and gives that count with the rest of
+    /// the contents, octets to read through `std::io::Read` or, when they
+    /// carry an encoding as the public key of a certificate does, values to
+    /// read with the same steps; `None` when the input ends before a value
+    /// starts.
+    ///
+    /// No contents at all, or a count over 7, is `MalformedValue`, as
+    /// `io::ErrorKind::InvalidData`, and the reader goes on past the value.
+    /// Otherwise errors as [`read_constructed`](Self::read_constructed).
+    /// Variable time, for public values only.
+    ///
+    /// # Examples
+    ///
+    /// The `RSAPublicKey` a `subjectPublicKey` carries:
+    ///
+    /// ```
+    /// use tc_asn1::io::Asn1Reader;
+    /// use tc_asn1::{Asn1Integer, DecodingOptions};
+    ///
+    /// // BIT STRING { 0 unused bits, SEQUENCE { INTEGER 5, INTEGER 3 } }
+    /// let data: &[u8] = &[
+    ///     0x03, 0x09, 0x00, 0x30, 0x06, 0x02, 0x01, 0x05, 0x02, 0x01, 0x03,
+    /// ];
+    /// let mut reader = Asn1Reader::new(data, DecodingOptions::default());
+    ///
+    /// let (unused, mut key) = reader.read_bit_string()?.expect("a BIT STRING");
+    /// assert_eq!(unused, 0);
+    /// let mut rsa = key.read_sequence()?.expect("an RSAPublicKey");
+    /// let modulus = rsa.read_value::<Asn1Integer>()?.expect("the modulus");
+    /// let exponent = rsa.read_value::<Asn1Integer>()?.expect("the exponent");
+    /// assert_eq!((modulus, exponent), (Asn1Integer::from(5), Asn1Integer::from(3)));
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn read_bit_string(&mut self) -> io::Result<Option<(u8, Asn1Body<'_, R>)>> {
+        Ok(match self.open_bits(0)? {
+            Some(unused) => Some((
+                unused,
+                Asn1Body {
+                    reader: self,
+                    level: 1,
+                },
+            )),
+            None => None,
+        })
+    }
+
     /// The limits every value is read within. Constant time.
     pub fn options(&self) -> &DecodingOptions {
         &self.options
@@ -417,15 +562,38 @@ impl<R: Read> Asn1Reader<R> {
     // The level `level` when it reads values and expects `step`
     fn expect(&self, level: usize, steps: &[Step], message: &'static str) -> io::Result<Level> {
         let current = self.levels[level];
-        if current.primitive {
-            return Err(misuse(
-                "the contents of a primitive value are octets, read through io::Read",
-            ));
-        }
         if !steps.contains(&current.step) {
             return Err(misuse(message));
         }
         Ok(current)
+    }
+
+    // Reads the header and length of the next value of `level` and opens its
+    // body when its identifier octets are `tag`; false at the end of the
+    // level. Other identifier octets are UnexpectedTag without failing the
+    // reader: the next read of the level skips the value
+    fn open_tagged(&mut self, level: usize, tag: &[u8]) -> io::Result<bool> {
+        let Some(found) = self.header_at(level)? else {
+            return Ok(false);
+        };
+        if found.as_bytes() != tag {
+            return Err(invalid(Asn1Error::UnexpectedTag));
+        }
+        self.len_at(level)?;
+        self.body_at(level)?;
+        Ok(true)
+    }
+
+    // open_tagged for a BIT STRING, reading its count of unused bits
+    fn open_bits(&mut self, level: usize) -> io::Result<Option<u8>> {
+        if !self.open_tagged(level, &[0x03])? {
+            return Ok(None);
+        }
+        let mut unused = [0u8; 1];
+        if self.raw_at(level + 1, &mut unused)? == 0 || unused[0] > 7 {
+            return Err(invalid(Asn1Error::MalformedValue));
+        }
+        Ok(Some(unused[0]))
     }
 
     fn part_at(&mut self, level: usize) -> io::Result<Part> {
@@ -565,7 +733,7 @@ impl<R: Read> Asn1Reader<R> {
     fn open_body(&mut self, level: usize) -> io::Result<()> {
         let current = self.levels[level];
         let depth = u32::try_from(level + 1).unwrap_or(u32::MAX);
-        if current.constructed && depth > self.options.depth() {
+        if depth > self.options.depth() {
             return Err(invalid(Asn1Error::DepthExceeded));
         }
         self.levels[level].step = Step::Opened;
@@ -575,8 +743,7 @@ impl<R: Read> Asn1Reader<R> {
                 .saturating_add(self.options.max_content_len() as u64)
                 .saturating_add(2)
         });
-        self.levels
-            .push(Level::new(current.value_end, !current.constructed, cap));
+        self.levels.push(Level::new(current.value_end, cap));
         Ok(())
     }
 
@@ -671,7 +838,7 @@ impl<R: Read> Asn1Reader<R> {
             };
         };
         if tag.as_bytes() == [0x00] {
-            if end != End::Eoc || self.read_octet(raw)? != 0x00 {
+            if end != End::Eoc || self.read_byte(raw)? != 0x00 {
                 return Err(invalid(Asn1Error::MalformedValue));
             }
             return Ok(None);
@@ -689,7 +856,7 @@ impl<R: Read> Asn1Reader<R> {
             match parse_tag(&raw[start..]) {
                 Ok(tag) => break tag.len(),
                 Err(Asn1Error::Truncated) if raw.len() - start < MAX_TAG_LEN => {
-                    self.read_octet(raw)?;
+                    self.read_byte(raw)?;
                 }
                 Err(Asn1Error::Truncated) => return Err(invalid(Asn1Error::MalformedValue)),
                 Err(error) => return Err(invalid(error)),
@@ -700,10 +867,10 @@ impl<R: Read> Asn1Reader<R> {
 
     fn read_length(&mut self, raw: &mut Vec<u8>) -> io::Result<Asn1Length> {
         let start = raw.len();
-        let first = self.read_octet(raw)?;
+        let first = self.read_byte(raw)?;
         if first > 0x80 && first != 0xFF {
             for _ in 0..first & 0x7F {
-                self.read_octet(raw)?;
+                self.read_byte(raw)?;
             }
         }
         let (_, length) = parse_len(&raw[start..]).map_err(invalid)?;
@@ -739,7 +906,7 @@ impl<R: Read> Asn1Reader<R> {
         }
     }
 
-    fn read_octet(&mut self, raw: &mut Vec<u8>) -> io::Result<u8> {
+    fn read_byte(&mut self, raw: &mut Vec<u8>) -> io::Result<u8> {
         self.check_room(1)?;
         let mut octet = [0u8; 1];
         self.inner.read_exact(&mut octet)?;
@@ -824,9 +991,10 @@ impl<R: Read> Asn1Reader<R> {
 /// [`read_len`](Self::read_len) and [`read_body`](Self::read_body), or
 /// whole with [`read_value`](Self::read_value) and
 /// [`read_object`](Self::read_object); `None` from `read_header` or `read_value`
-/// is the end of the contents. The contents of a primitive value are
-/// octets, read through `std::io::Read`, which also copies the contents of a
-/// constructed value of definite length as they are. While a body is held,
+/// is the end of the contents. The contents of a primitive value that
+/// carries an encoding, such as an OCTET STRING or the BIT STRING of a public
+/// key, are read the same way. Any contents of definite length are also
+/// octets, read through `std::io::Read`. While a body is held,
 /// the reader it came from cannot be used; what it leaves unread is skipped
 /// by the next read on that reader.
 ///
@@ -944,11 +1112,69 @@ impl<R: Read> Asn1Body<'_, R> {
     pub fn read_object(&mut self) -> io::Result<Option<Asn1Object>> {
         self.read_value::<Asn1Object>()
     }
+
+    /// [`Asn1Reader::read_sequence`] for the values of this body; `None` at
+    /// its end.
+    pub fn read_sequence(&mut self) -> io::Result<Option<Asn1Body<'_, R>>> {
+        self.read_constructed(&[0x30])
+    }
+
+    /// [`Asn1Reader::read_set`] for the values of this body; `None` at its
+    /// end.
+    pub fn read_set(&mut self) -> io::Result<Option<Asn1Body<'_, R>>> {
+        self.read_constructed(&[0x31])
+    }
+
+    /// [`Asn1Reader::read_constructed`] for the values of this body; `None`
+    /// at its end.
+    pub fn read_constructed(&mut self, tag: &[u8]) -> io::Result<Option<Asn1Body<'_, R>>> {
+        if tag.first().is_none_or(|first| first & 0x20 == 0) {
+            return Err(misuse(
+                "read_constructed with identifier octets not constructed",
+            ));
+        }
+        Ok(if self.reader.open_tagged(self.level, tag)? {
+            Some(Asn1Body {
+                reader: &mut *self.reader,
+                level: self.level + 1,
+            })
+        } else {
+            None
+        })
+    }
+
+    /// [`Asn1Reader::read_octet`] for the values of this body; `None` at its
+    /// end.
+    pub fn read_octet(&mut self) -> io::Result<Option<Asn1Body<'_, R>>> {
+        Ok(if self.reader.open_tagged(self.level, &[0x04])? {
+            Some(Asn1Body {
+                reader: &mut *self.reader,
+                level: self.level + 1,
+            })
+        } else {
+            None
+        })
+    }
+
+    /// [`Asn1Reader::read_bit_string`] for the values of this body; `None`
+    /// at its end.
+    pub fn read_bit_string(&mut self) -> io::Result<Option<(u8, Asn1Body<'_, R>)>> {
+        Ok(match self.reader.open_bits(self.level)? {
+            Some(unused) => Some((
+                unused,
+                Asn1Body {
+                    reader: &mut *self.reader,
+                    level: self.level + 1,
+                },
+            )),
+            None => None,
+        })
+    }
 }
 
-/// The octets of the contents, never past their end: those of a primitive
-/// value, or those of a constructed value of definite length as they are,
-/// between its values. On an indefinite length, or inside the steps of a
+/// The octets of the contents, never past their end, those of any value of
+/// definite length as they are, between its values. On an indefinite
+/// length, or inside the steps of a
 /// value, it is `io::ErrorKind::InvalidInput`. Variable time, for public
 /// values only.
 impl<R: Read> Read for Asn1Body<'_, R> {
@@ -1243,14 +1469,52 @@ mod tests {
     }
 
     #[test]
-    fn primitive_contents_are_not_read_as_values() {
-        let mut reader = open(&[0x04, 0x03, 0x02, 0x01, 0x01]);
-        reader.read_header().unwrap();
-        reader.read_len().unwrap();
-        let mut body = reader.read_body().unwrap();
+    fn primitive_contents_carrying_an_encoding_are_read_as_values() {
+        // OCTET STRING { SEQUENCE { INTEGER 1 } }, then INTEGER 9
+        let wire: &[u8] = &[0x04, 0x05, 0x30, 0x03, 0x02, 0x01, 0x01, 0x02, 0x01, 0x09];
+        let mut reader = open(wire);
+        {
+            let mut octets = reader.read_octet().unwrap().unwrap();
+            let mut sequence = octets.read_sequence().unwrap().unwrap();
+            assert_eq!(
+                sequence.read_value::<Asn1Integer>().unwrap(),
+                Some(Asn1Integer::from(1))
+            );
+        }
         assert_eq!(
-            body.read_header().unwrap_err().kind(),
-            io::ErrorKind::InvalidInput
+            reader.read_value::<Asn1Integer>().unwrap(),
+            Some(Asn1Integer::from(9))
+        );
+    }
+
+    #[test]
+    fn read_bit_string_gives_the_unused_bits_and_the_rest() {
+        let wire: &[u8] = &[0x03, 0x03, 0x03, 0xAB, 0xC8, 0x02, 0x01, 0x09];
+        let mut reader = open(wire);
+        {
+            let (unused, mut bits) = reader.read_bit_string().unwrap().unwrap();
+            assert_eq!(unused, 3);
+            let mut octets = Vec::new();
+            bits.read_to_end(&mut octets).unwrap();
+            assert_eq!(octets, [0xAB, 0xC8]);
+        }
+        assert_eq!(
+            reader.read_value::<Asn1Integer>().unwrap(),
+            Some(Asn1Integer::from(9))
+        );
+
+        // No contents, or a count over 7: malformed, and the reader goes on
+        let wire: &[u8] = &[0x03, 0x00, 0x03, 0x02, 0x08, 0x00, 0x02, 0x01, 0x09];
+        let mut reader = open(wire);
+        for _ in 0..2 {
+            assert_eq!(
+                error_of(reader.read_bit_string().map(|_| ()).unwrap_err()),
+                Asn1Error::MalformedValue
+            );
+        }
+        assert_eq!(
+            reader.read_value::<Asn1Integer>().unwrap(),
+            Some(Asn1Integer::from(9))
         );
     }
 
@@ -1563,5 +1827,62 @@ mod tests {
             [0x9F, 0x1F]
         );
         assert_eq!(high.read_len().unwrap(), Asn1Length::Definite(256));
+    }
+
+    #[test]
+    fn the_helpers_open_a_sequence_a_set_a_tagged_value_and_an_octet_string() {
+        // SEQUENCE { SET { INTEGER 1 } [0] { OCTET STRING "ab" } }
+        let wire: &[u8] = &[
+            0x30, 0x0C, 0x31, 0x03, 0x02, 0x01, 0x01, 0xA0, 0x05, 0x04, 0x03, b'a', b'b', b'c',
+        ];
+        let mut reader = open(wire);
+        let mut sequence = reader.read_sequence().unwrap().unwrap();
+        {
+            let mut set = sequence.read_set().unwrap().unwrap();
+            assert_eq!(
+                set.read_value::<Asn1Integer>().unwrap(),
+                Some(Asn1Integer::from(1))
+            );
+        }
+        {
+            let mut tagged = sequence.read_constructed(&[0xA0]).unwrap().unwrap();
+            let mut contents = Vec::new();
+            tagged
+                .read_octet()
+                .unwrap()
+                .unwrap()
+                .read_to_end(&mut contents)
+                .unwrap();
+            assert_eq!(contents, b"abc");
+        }
+        assert!(sequence.read_sequence().unwrap().is_none());
+        assert!(reader.read_sequence().unwrap().is_none());
+    }
+
+    #[test]
+    fn a_helper_meeting_another_tag_refuses_it_and_the_reader_goes_on() {
+        let wire: &[u8] = &[0x04, 0x01, 0xAA, 0x30, 0x03, 0x02, 0x01, 0x07];
+        let mut reader = open(wire);
+        assert_eq!(
+            error_of(reader.read_sequence().map(|_| ()).unwrap_err()),
+            Asn1Error::UnexpectedTag
+        );
+        let mut sequence = reader.read_sequence().unwrap().unwrap();
+        assert_eq!(
+            sequence.read_value::<Asn1Integer>().unwrap(),
+            Some(Asn1Integer::from(7))
+        );
+    }
+
+    #[test]
+    fn read_constructed_refuses_identifier_octets_not_constructed() {
+        let mut reader = open(&[0x04, 0x00]);
+        for tag in [&[][..], &[0x04]] {
+            assert_eq!(
+                reader.read_constructed(tag).map(|_| ()).unwrap_err().kind(),
+                io::ErrorKind::InvalidInput
+            );
+        }
+        assert!(reader.read_octet().unwrap().is_some());
     }
 }
