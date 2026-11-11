@@ -20,9 +20,9 @@ The second use is looking at an encoding whose schema you do not have, or
 have not written yet: decode any BER into a tree and dump it, or walk the
 elements one level at a time.
 
-The crate is `no_std` + `alloc`, has no macros and no I/O, has no
-dependencies unless an optional feature is on, and knows nothing of any
-protocol.
+The crate is `no_std` + `alloc`, has no macros, does no I/O unless the
+`std` feature is on, has no dependencies unless an optional feature is on,
+and knows nothing of any protocol.
 
 ## Usage
 
@@ -229,6 +229,10 @@ with, or what stands in for one.
 | `Asn1Constructed<T>` | A constructed value under any tag holding elements of one type: the mechanism behind SEQUENCE OF, SET OF and `[n] IMPLICIT SEQUENCE OF` |
 | `Asn1Object` | A whole decoded tree, one variant per universal type, for reading and writing without a schema |
 | `NamedOid` | An OID constant with its dotted form and a name, checked when compiled; the building block of an OID table |
+| `io::Asn1Writer` | With `std`: writes values to a `std::io::Write` under one set of rules, whole with `write_value` or in steps, `write_header`, `write_len`, `write_body` and `write_foot` for an indefinite length, then `flush` |
+| `io::Asn1BodyWriter` | With `std`: the contents of one value being written, with the same steps or as octets through `std::io::Write`, for a value too large to hold |
+| `io::Asn1Reader` | With `std`: reads values from a `std::io::Read` in steps, `read_header`, `read_len` and `read_body` or `read` giving each as an `io::Asn1Item`, or whole with `read_value` and `read_object`, within the decoding limits and nothing past them |
+| `io::Asn1Body` | With `std`: the contents of one value, read with the same steps or as octets through `std::io::Read`, for a value too large to hold |
 | `DecodingContext`, `DecodingOptions` | The state a decoding carries (depth, DER or not) and the limits it is held to (depth, contents length, element count) |
 | `EncodingOptions` | The rule set to write: `BER`, `CER`, `DER`, or `new` for indefinite BER |
 
@@ -289,6 +293,11 @@ with empty contents.
 to and from `chrono::DateTime<Utc>`. Going to chrono is exact, fractional
 seconds included; coming from it truncates to the second, turns a leap second
 into `:59`, and rejects a year outside the type's range.
+
+`std` (off by default) adds the `io` module, `Asn1Writer` and `Asn1Reader`,
+which write encoded values to a `std::io::Write` and read them from a
+`std::io::Read`, such as a file or a socket. It adds no dependency, only the
+standard library. [IO.md](IO.md) shows how to use it.
 
 ## License
 

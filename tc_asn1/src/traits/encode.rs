@@ -80,6 +80,31 @@ pub trait Encode: EncodeTagged {
     /// Writes the TLV at the start of `out` and returns the count; `out`
     /// shorter than `encoded_len` is [`Asn1Error::BufferTooSmall`].
     fn encode(&self, rules: &EncodingOptions, out: &mut [u8]) -> Result<usize, Asn1Error>;
+
+    /// Writes the whole TLV to `out`, such as a file or a socket. An encoding
+    /// failure is `io::ErrorKind::InvalidData` carrying the [`Asn1Error`],
+    /// with nothing written; a write failure is the writer's own error.
+    ///
+    /// The provided method encodes the value in memory with
+    /// [`encode_to_vec`](Self::encode_to_vec) and writes it whole. A type
+    /// that may be large can write its parts as it goes instead, provided the
+    /// octets are exactly those of `encode`; a value whose path from the root
+    /// to its large part writes as it goes never holds that part in memory.
+    /// The writer is borrowed as `dyn io::Write` so that `dyn Encode` stays
+    /// possible.
+    ///
+    /// Available with the `std` feature.
+    #[cfg(feature = "std")]
+    fn encode_to_writer(
+        &self,
+        rules: &EncodingOptions,
+        out: &mut dyn std::io::Write,
+    ) -> std::io::Result<()> {
+        let encoding = self
+            .encode_to_vec(rules)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+        out.write_all(&encoding)
+    }
 }
 
 /// Length of an ordinary TLV. Variable time: branches only on the encoding structure.

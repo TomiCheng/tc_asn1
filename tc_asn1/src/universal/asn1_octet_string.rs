@@ -9,6 +9,8 @@ use alloc::vec::Vec;
 
 use super::cer_common::too_long_for_cer;
 use crate::traits::encode::default_encode;
+#[cfg(feature = "std")]
+use crate::traits::encode::write_len;
 use crate::{
     Asn1Error, Decode, DecodeContent, DecodeInner, DecodingContext, Encode, EncodeContent,
     EncodeTagged, EncodingOptions, Tagged,
@@ -128,6 +130,29 @@ impl Encode for Asn1OctetString {
 
     fn encode(&self, rules: &EncodingOptions, out: &mut [u8]) -> Result<usize, Asn1Error> {
         self.encode_tagged(Self::TAG, rules, out)
+    }
+
+    /// Writes the identifier and length octets, then the contents straight
+    /// from the value, without a copy of the whole encoding. The octets and
+    /// the errors are those of [`encode`](Encode::encode). Variable time:
+    /// branches only on the encoding structure.
+    #[cfg(feature = "std")]
+    fn encode_to_writer(
+        &self,
+        rules: &EncodingOptions,
+        out: &mut dyn std::io::Write,
+    ) -> std::io::Result<()> {
+        if too_long_for_cer(self.bytes.len(), rules) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                Asn1Error::PrimitiveTooLong,
+            ));
+        }
+        let mut header = [0u8; 2 + core::mem::size_of::<usize>()];
+        header[0] = Self::TAG[0];
+        let len = write_len(self.bytes.len(), &mut header[1..]);
+        out.write_all(&header[..1 + len])?;
+        out.write_all(&self.bytes)
     }
 }
 
@@ -250,5 +275,34 @@ mod tests {
         ));
         let mut out = [0u8; 5];
         assert_eq!(value.encode(&der(), &mut out).unwrap(), 5);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn writing_to_a_writer_gives_the_same_octets_and_errors_as_encode() {
+        for len in [0, 1, 127, 128, 255, 256, 1000, 1001, 70_000] {
+            let value = Asn1OctetString::new(&vec![0xA5; len]);
+            for rules in [
+                EncodingOptions::BER,
+                EncodingOptions::DER,
+                EncodingOptions::CER,
+            ] {
+                let mut written = Vec::new();
+                let result = value.encode_to_writer(&rules, &mut written);
+                match value.encode_to_vec(&rules) {
+                    Ok(expected) => {
+                        result.unwrap();
+                        assert_eq!(written, expected, "{len} {rules:?}");
+                    }
+                    Err(expected) => {
+                        let error = result.unwrap_err();
+                        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+                        let inner = error.into_inner().unwrap();
+                        assert_eq!(inner.downcast_ref::<Asn1Error>(), Some(&expected));
+                        assert!(written.is_empty());
+                    }
+                }
+            }
+        }
     }
 }

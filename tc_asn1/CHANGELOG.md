@@ -2,6 +2,69 @@
 
 All notable changes to `tc_asn1` are documented in this file.
 
+## 0.1.4 - 2026-11-11
+
+### Added
+
+- `Encode::encode_to_writer`, behind the `std` feature below: writes the
+  whole TLV to a borrowed `dyn std::io::Write`, so `dyn Encode` stays
+  possible. The provided method encodes in memory and writes the result; a
+  type that may be large can write its parts as it goes instead.
+  `Asn1OctetString` does: it writes its identifier and length octets, then
+  its contents straight from the value.
+- An optional `std` feature, off by default, with the `io` module and
+  `io::Asn1Writer`: it wraps any `std::io::Write` and writes under the rules it was
+  created with, a value whole with `write_value` or in steps, `write_header`,
+  `write_len` and `write_body`, an `io::Asn1BodyWriter` taking the same steps
+  for the values of a constructed value and `std::io::Write` for the octets of
+  a primitive one or octets encoded beforehand, so a value larger than memory
+  can be written part by part. `write_sequence`, `write_set`,
+  `write_constructed`, `write_octet` and `write_bit_string` take the three
+  steps of one value at once, checking the whole header before writing any
+  of it, and the body of a primitive value takes values too, for the
+  encoding an OCTET STRING or a BIT STRING carries. A definite length closes its value once the
+  contents are written, an indefinite one closes with `write_foot`, and
+  `flush` comes last, checking that every value is closed. Each level keeps a
+  state machine: a call out of order, contents past a length, identifier
+  octets that are not one tag, and an indefinite length on a primitive value
+  or under DER are `InvalidInput` and write nothing. An encoding failure is
+  `InvalidData` carrying the `Asn1Error`, with nothing written; a failure of
+  the writer underneath fails the writer for good.
+- `io::Asn1Reader`, also behind `std`: it wraps any `std::io::Read` and reads a value in
+  steps, `read_header` for its identifier octets as an `io::Asn1Tag`,
+  `read_len` for its length as an `io::Asn1Length` and `read_body` for its
+  contents, or with `read`, which gives whichever comes next as an
+  `io::Asn1Item`, or whole in one, `read_value::<T>` for a known type,
+  `read_value_der::<T>` for one that must be DER, and `read_object` for an
+  unknown one. `read_sequence`, `read_set`,
+  `read_constructed`, `read_octet` and `read_bit_string` read the header and
+  length of a value that must carry the expected tag and give its body,
+  `read_bit_string` with its count of unused bits; another tag is
+  `UnexpectedTag` and the reader goes on past that value. The body of a
+  primitive value reads as values too, for the encoding an OCTET STRING or a
+  BIT STRING carries. `read_body` gives an
+  `io::Asn1Body` limited to the contents, with the same steps for the values
+  of a constructed value and `std::io::Read` for the octets of a primitive
+  one, so a value larger than memory can be read part by part. The next read
+  of a level closes the value before it, skipping what was left unread. Each level keeps a state machine: a call out
+  of order is `InvalidInput` and reads nothing, and an error in the input
+  fails the reader for good. It reads exactly the octets of a value and
+  nothing past them, under the header rules `Asn1Ref::parse` applies. Every
+  definite length is held to `max_content_len` when it is read, before its
+  contents, whether the value is read whole or its body streamed, and the
+  contents of an indefinite length are held to it in total, memory grows with the octets that arrive rather than with the length
+  a peer claims, and nesting is held to `depth`. Input ending inside a value
+  is `UnexpectedEof`; a value over a limit or of another type is
+  `InvalidData` carrying the `Asn1Error`.
+
+### Compatibility
+
+- Additive. Without `std` the crate is `no_std` as before and has the same
+  API; with it, it links the standard library and adds no dependency.
+  `encode_to_writer` is a provided method, so every existing `Encode`
+  implementation keeps compiling; a crate that overrides it does so under
+  `tc_asn1/std`.
+
 ## 0.1.3 - 2026-11-10
 
 ### Added

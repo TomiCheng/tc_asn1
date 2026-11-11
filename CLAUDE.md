@@ -18,9 +18,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 The crate list and workspace-wide checks live in the root
 [README.md](README.md); read it rather than restating it here. Every crate is
-`no_std` + `alloc`. `tc_asn1` has two optional features, off by default and
-each adding one dependency (`zeroize` adds `tc_zeroize`, `chrono` adds `chrono`),
-and no dependencies without them;
+`no_std` + `alloc`. `tc_asn1` has three optional features, off by default:
+`zeroize` and `chrono` each add one dependency (`tc_zeroize`, `chrono`), and
+`std` adds none but links the standard library for `Asn1Writer` and
+`Asn1Reader`, so it is left
+out on `aarch64-unknown-none`; without them the crate has no dependencies;
 `tc_asn1_x500` has no features and depends on `tc_asn1` alone; `tc_asn1_x509`
 depends on `tc_asn1` and `tc_asn1_x500`, and its optional `chrono` feature adds
 `chrono` and turns on `tc_asn1`'s — CI enforces each with `cargo tree` on the
