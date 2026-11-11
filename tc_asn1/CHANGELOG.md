@@ -31,9 +31,10 @@ All notable changes to `tc_asn1` are documented in this file.
   of a level closes the value before it, skipping what was left unread. Each level keeps a state machine: a call out
   of order is `InvalidInput` and reads nothing, and an error in the input
   fails the reader for good. It reads exactly the octets of a value and
-  nothing past them, under the header rules `Asn1Ref::parse` applies. A value
-  read whole is held to `max_content_len`, checked before its contents are
-  read, memory grows with the octets that arrive rather than with the length
+  nothing past them, under the header rules `Asn1Ref::parse` applies. Every
+  definite length is held to `max_content_len` when it is read, before its
+  contents, whether the value is read whole or its body streamed, and the
+  contents of an indefinite length are held to it in total, memory grows with the octets that arrive rather than with the length
   a peer claims, and nesting is held to `depth`. Input ending inside a value
   is `UnexpectedEof`; a value over a limit or of another type is
   `InvalidData` carrying the `Asn1Error`.

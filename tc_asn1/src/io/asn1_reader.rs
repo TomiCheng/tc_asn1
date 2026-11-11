@@ -71,13 +71,17 @@ struct Level {
     // The value whose header this level is reading
     constructed: bool,
     value_end: End,
+    // How far the contents of an indefinite length may run: they are held to
+    // max_content_len in total, as a definite length is
+    cap: Option<u64>,
 }
 
 impl Level {
-    fn new(end: End, primitive: bool) -> Self {
+    fn new(end: End, primitive: bool, cap: Option<u64>) -> Self {
         Self {
             end,
             primitive,
+            cap,
             step: Step::Header,
             constructed: false,
             value_end: End::Input,
@@ -135,10 +139,15 @@ impl Failure {
 ///
 /// It reads exactly the octets of each value and nothing past them. It reads
 /// a header an octet at a time, so wrap an unbuffered source in a
-/// `std::io::BufReader`. A value read whole is held to
-/// [`DecodingOptions::max_content_len`], checked before its contents are
-/// read, and memory grows with the octets that arrive rather than with the
-/// length a peer claims; nesting is held to [`DecodingOptions::depth`].
+/// `std::io::BufReader`. Every definite length is held to
+/// [`DecodingOptions::max_content_len`] when it is read, before any of its
+/// contents, so streaming a value larger than the default needs a larger
+/// limit; the contents of an indefinite length are held to it in total,
+/// their end-of-contents octets aside, so the value that would carry them
+/// past it is refused, and a value read whole
+/// is held to it as well. Memory grows with the octets that arrive rather
+/// than with the length a peer claims.
+/// Nesting is held to [`DecodingOptions::depth`].
 /// Values are decoded as BER. Reading is variable time, for public values
 /// only: it branches on the structure.
 ///
@@ -180,7 +189,7 @@ impl<R: Read> Asn1Reader<R> {
             inner,
             options,
             position: 0,
-            levels: alloc::vec![Level::new(End::Input, false)],
+            levels: alloc::vec![Level::new(End::Input, false, None)],
             failed: None,
         }
     }
@@ -276,10 +285,12 @@ impl<R: Read> Asn1Reader<R> {
 
     /// Reads the length octets of the value whose header was just read.
     ///
-    /// The reserved octet `FF`, an indefinite length on a primitive value
-    /// and a length reaching past the value around it are `MalformedValue`,
-    /// a length past `usize` is `LengthOverflow`, each as
-    /// `io::ErrorKind::InvalidData`. Anywhere but right after
+    /// A definite length over [`DecodingOptions::max_content_len`] is
+    /// `ContentLengthExceeded`, so the limit bounds a body streamed as well as
+    /// a value read whole; raise it to stream larger values. The reserved
+    /// octet `FF`, an indefinite length on a primitive value and a length
+    /// reaching past the value around it are `MalformedValue`, a length past
+    /// `usize` is `LengthOverflow`, each as `io::ErrorKind::InvalidData`. Anywhere but right after
     /// [`read_header`](Self::read_header) it is `io::ErrorKind::InvalidInput`.
     /// Variable time, for public values only.
     pub fn read_len(&mut self) -> io::Result<Asn1Length> {
@@ -558,8 +569,14 @@ impl<R: Read> Asn1Reader<R> {
             return Err(invalid(Asn1Error::DepthExceeded));
         }
         self.levels[level].step = Step::Opened;
+        let cap = (current.value_end == End::Eoc).then(|| {
+            // The end-of-contents octets come on top of the contents
+            self.position
+                .saturating_add(self.options.max_content_len() as u64)
+                .saturating_add(2)
+        });
         self.levels
-            .push(Level::new(current.value_end, !current.constructed));
+            .push(Level::new(current.value_end, !current.constructed, cap));
         Ok(())
     }
 
@@ -609,10 +626,18 @@ impl<R: Read> Asn1Reader<R> {
         })
     }
 
+    // The nearest point an indefinite length around the position may run to
+    fn cap(&self) -> Option<u64> {
+        self.levels.iter().filter_map(|level| level.cap).min()
+    }
+
     // Where the contents of a value whose header ends here end, within the
     // values around it
     fn value_end(&self, constructed: bool, length: Asn1Length) -> io::Result<End> {
         let end = match length {
+            Asn1Length::Definite(len) if len > self.options.max_content_len() => {
+                return Err(invalid(Asn1Error::ContentLengthExceeded));
+            }
             Asn1Length::Definite(len) => End::At(
                 self.position
                     .checked_add(len as u64)
@@ -621,9 +646,12 @@ impl<R: Read> Asn1Reader<R> {
             Asn1Length::Indefinite if constructed => End::Eoc,
             Asn1Length::Indefinite => return Err(invalid(Asn1Error::MalformedValue)),
         };
-        if let (Some(limit), End::At(end)) = (self.limit(), end) {
-            if end > limit {
+        if let End::At(end) = end {
+            if self.limit().is_some_and(|limit| end > limit) {
                 return Err(invalid(Asn1Error::MalformedValue));
+            }
+            if self.cap().is_some_and(|cap| end > cap) {
+                return Err(invalid(Asn1Error::ContentLengthExceeded));
             }
         }
         Ok(end)
@@ -684,10 +712,14 @@ impl<R: Read> Asn1Reader<R> {
 
     // Refuses to read past the innermost definite end
     fn check_room(&self, more: u64) -> io::Result<()> {
-        match self.limit() {
-            Some(limit) if self.position + more > limit => Err(invalid(Asn1Error::MalformedValue)),
-            _ => Ok(()),
+        let end = self.position + more;
+        if self.limit().is_some_and(|limit| end > limit) {
+            return Err(invalid(Asn1Error::MalformedValue));
         }
+        if self.cap().is_some_and(|cap| end > cap) {
+            return Err(invalid(Asn1Error::ContentLengthExceeded));
+        }
+        Ok(())
     }
 
     // The first octet of a value, or None at the end of the input
@@ -1351,6 +1383,94 @@ mod tests {
             error_of(reader.read_value::<Asn1Any>().unwrap_err()),
             Asn1Error::ContentLengthExceeded
         );
+    }
+
+    #[test]
+    fn read_len_refuses_a_length_over_the_limit_and_a_larger_limit_streams_it() {
+        // OCTET STRING of 4 GB, with no contents following
+        let wire: &[u8] = &[0x04, 0x85, 0x01, 0x00, 0x00, 0x00, 0x00];
+        let mut reader = open(wire);
+        reader.read_header().unwrap();
+        assert_eq!(
+            error_of(reader.read_len().unwrap_err()),
+            Asn1Error::ContentLengthExceeded
+        );
+
+        let mut wire = vec![0x04, 0x82, 0x01, 0x00];
+        wire.extend_from_slice(&[0xAB; 256]);
+        let small = DecodingOptions::new(32, 255, 1024);
+        let mut reader = Asn1Reader::new(&wire[..], small);
+        reader.read_header().unwrap();
+        assert_eq!(
+            error_of(reader.read_len().unwrap_err()),
+            Asn1Error::ContentLengthExceeded
+        );
+
+        let large = DecodingOptions::new(32, 256, 1024);
+        let mut reader = Asn1Reader::new(&wire[..], large);
+        reader.read_header().unwrap();
+        assert_eq!(reader.read_len().unwrap(), Asn1Length::Definite(256));
+        let mut contents = Vec::new();
+        reader
+            .read_body()
+            .unwrap()
+            .read_to_end(&mut contents)
+            .unwrap();
+        assert_eq!(contents, [0xAB; 256]);
+    }
+
+    #[test]
+    fn the_values_of_an_indefinite_length_are_held_to_the_limit_in_total() {
+        // SEQUENCE (indefinite) of OCTET STRINGs of 8, each within a limit of 20
+        let mut wire = vec![0x30, 0x80];
+        for _ in 0..3 {
+            wire.extend_from_slice(&[0x04, 0x08, 0, 0, 0, 0, 0, 0, 0, 0]);
+        }
+        wire.extend_from_slice(&[0x00, 0x00]);
+        let options = DecodingOptions::new(32, 20, 1024);
+
+        let mut reader = Asn1Reader::new(&wire[..], options.clone());
+        reader.read_header().unwrap();
+        assert_eq!(reader.read_len().unwrap(), Asn1Length::Indefinite);
+        let mut body = reader.read_body().unwrap();
+        let mut read = 0;
+        let error = loop {
+            match body.read_value::<Asn1OctetString>() {
+                Ok(Some(_)) => read += 1,
+                Ok(None) => panic!("the limit was not applied"),
+                Err(error) => break error,
+            }
+        };
+        assert_eq!(read, 2);
+        assert_eq!(error_of(error), Asn1Error::ContentLengthExceeded);
+
+        // The same through the steps: the second value still fits, the third does not
+        let mut reader = Asn1Reader::new(&wire[..], options.clone());
+        reader.read_header().unwrap();
+        reader.read_len().unwrap();
+        let mut body = reader.read_body().unwrap();
+        for _ in 0..2 {
+            body.read_header().unwrap();
+            body.read_len().unwrap();
+        }
+        body.read_header().unwrap();
+        assert_eq!(
+            error_of(body.read_len().unwrap_err()),
+            Asn1Error::ContentLengthExceeded
+        );
+
+        // Two values fill the limit exactly, and the end-of-contents octets still read
+        let mut exact = vec![0x30, 0x80];
+        exact.extend_from_slice(&wire[2..22]);
+        exact.extend_from_slice(&[0x00, 0x00]);
+        let mut reader = Asn1Reader::new(&exact[..], options);
+        reader.read_header().unwrap();
+        reader.read_len().unwrap();
+        {
+            let mut body = reader.read_body().unwrap();
+            while body.read_value::<Asn1OctetString>().unwrap().is_some() {}
+        }
+        assert!(reader.read_header().unwrap().is_none());
     }
 
     #[test]
